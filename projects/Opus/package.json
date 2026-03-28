@@ -1,0 +1,9 @@
+{
+  "name": "opus",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Frontend assets for the Opus Tauri prototype",
+  "scripts": {
+    "desktop": "cargo run --manifest-path src-tauri/Cargo.toml --bin opus-tauri"
+  }
+}

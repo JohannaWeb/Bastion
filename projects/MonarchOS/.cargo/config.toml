@@ -1,0 +1,11 @@
+[build]
+target = "x86_64-unknown-none"
+rustflags = ["-C", "link-args=-T linker.ld", "-C", "link-args=-pie", "-C", "link-args=-zmax-page-size=0x1000"]
+
+[unstable]
+build-std = ["core", "compiler_builtins", "alloc"]
+build-std-features = ["compiler-builtins-mem"]
+
+[profile.release]
+opt-level = 3
+lto = true

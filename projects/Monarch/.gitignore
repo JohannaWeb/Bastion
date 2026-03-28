@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Models and data
+models/
+data/raw/
+data/processed/
+*.pt
+*.pth
+*.bin
+*.safetensors
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+runs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Hugging Face cache
+.cache/
+huggingface_cache/
+
+# Temporary
+*.tmp
+*.temp
+temp/

@@ -1,0 +1,15 @@
+# Rust build artifacts
+falcon-rust/target/
+falcon-rust/falcon.db
+
+# Node.js
+falcon-web/node_modules/
+falcon-web/dist/
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db

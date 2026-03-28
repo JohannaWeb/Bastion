@@ -1,0 +1,21 @@
+{
+  "alias": ["juntos.chat"],
+  "rewrites": [
+    {
+      "source": "/xrpc/:path*",
+      "destination": "https://projectfalcon-production.up.railway.app/xrpc/:path*"
+    },
+    {
+      "source": "/ws/:path*",
+      "destination": "https://projectfalcon-production.up.railway.app/ws/:path*"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "https://projectfalcon-production.up.railway.app/api/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

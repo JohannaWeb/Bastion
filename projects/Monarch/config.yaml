@@ -1,0 +1,65 @@
+# Monarch Training Configuration
+
+# Model configuration
+model:
+  base_model: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"  # Start with TinyLlama, upgrade to Llama-2-7b with more compute
+  output_dir: "models/monarch_lora"
+
+# LoRA configuration
+lora:
+  enabled: true
+  rank: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - v_proj
+
+# Training parameters
+training:
+  num_epochs: 3
+  batch_size: 4
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4
+  warmup_steps: 100
+  max_grad_norm: 1.0
+  weight_decay: 0.01
+
+  # Optimizer
+  optimizer: "paged_adamw_8bit"  # uses 8-bit quantization if CUDA available
+
+  # Precision
+  bf16: true  # bfloat16 if CUDA available
+
+  # Checkpointing
+  save_steps: 50
+  save_total_limit: 2
+  logging_steps: 10
+
+# Data configuration
+data:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  max_length: 512
+  source_project: "/home/johanna/projects/ProjectFalcon"
+
+# Inference configuration
+inference:
+  max_length: 256
+  temperature: 0.7
+  top_p: 0.9
+  device: "auto"  # or cuda/cpu
+
+# Metadata
+metadata:
+  name: "Monarch"
+  version: "1.0"
+  description: "Expert LLM for Project Falcon / Juntos - LGBT+ decentralized community platform"
+  author: "Johanna"
+  personality: "Direct, precise, technically rigorous, principled on safety"
+  values:
+    - "Sovereignty is non-negotiable"
+    - "Trust is computed, not assigned"
+    - "Transparency over black boxes"
+    - "Decentralization is a value, not a feature"
+    - "The protocol outlasts the product"

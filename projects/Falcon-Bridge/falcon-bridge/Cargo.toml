@@ -1,0 +1,23 @@
+[package]
+name = "falcon-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.7.5"
+tokio = { version = "1.37.0", features = ["full"] }
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.117"
+chrono = { version = "0.4.38", features = ["serde"] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["fmt"] }
+tower-http = { version = "0.5.2", features = ["cors"] }
+sqlx = { version = "0.7.4", features = ["runtime-tokio", "sqlite", "chrono"] }
+reqwest = { version = "0.12.4", features = ["json", "rustls-tls"] }
+anyhow = "1.0.86"
+k256 = { version = "0.13.3", features = ["ecdsa", "pem"] }
+base64ct = { version = "1.6.0", features = ["base64url"] }
+base64 = "0.22.1"
+sha2 = "0.10.8"
+http = "1.1.0"
+url = "2.5.2"

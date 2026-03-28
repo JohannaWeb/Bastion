@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: falcon-alpha
+  datasource:
+    url: jdbc:h2:mem:falcondb;DB_CLOSE_DELAY=-1
+    driverClassName: org.h2.Driver
+    username: sa
+    password: password
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+
+server:
+  port: ${PORT:8080}
+  address: 0.0.0.0
+
+logging:
+  structured:
+    format:
+      console: ecs
+  level:
+    app.juntos: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics,loggers
+  endpoint:
+    health:
+      show-details: always
+    prometheus:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      environment: ${RAILWAY_ENVIRONMENT_NAME:local}

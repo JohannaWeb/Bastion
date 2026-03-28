@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Opus</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Sovereign AI IDE</p>
+          <h1>Every agent action is identity-bound, policy-aware, and signed.</h1>
+        </div>
+        <div class="hero-copy">
+          <p>
+            This prototype exposes the product wedge directly: DID-backed principals,
+            capability contracts, human approvals, and a verifiable event ledger.
+          </p>
+          <div class="hero-actions">
+            <button id="refresh">Refresh Snapshot</button>
+            <button id="reset" class="secondary">Reset Ledger</button>
+          </div>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="panel wide ide-panel">
+          <div class="panel-header">
+            <h2>Workspace</h2>
+            <p>Browse the repo and open text files into tabs instead of only viewing runtime cards.</p>
+          </div>
+          <div class="ide-layout">
+            <aside class="file-explorer">
+              <div class="explorer-head">
+                <strong>Files</strong>
+                <button id="refresh-workspace" class="secondary">Refresh Tree</button>
+              </div>
+              <div id="workspace-tree" class="workspace-tree"></div>
+            </aside>
+
+            <section class="editor-shell">
+              <div id="editor-tabs" class="editor-tabs"></div>
+              <div id="editor-state" class="editor-state">
+                Select a file from the workspace to open it in the editor.
+              </div>
+              <article id="editor-view" class="editor-view" hidden>
+                <div class="editor-meta">
+                  <strong id="editor-title"></strong>
+                  <span id="editor-path" class="mono"></span>
+                  <span id="editor-lines"></span>
+                </div>
+                <pre id="editor-content"></pre>
+              </article>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Trust Graph</h2>
+            <p id="owner-did"></p>
+          </div>
+          <div id="identities" class="stack"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Policy Surface</h2>
+            <p>Capabilities are explicit, not implied.</p>
+          </div>
+          <div id="policy" class="policy-grid"></div>
+        </section>
+
+        <section class="panel wide">
+          <div class="panel-header">
+            <h2>Action Contracts</h2>
+            <p>Run the same four demo requests the CLI uses, but through a Tauri shell.</p>
+          </div>
+          <div id="actions" class="action-grid"></div>
+        </section>
+
+        <section class="panel wide">
+          <div class="panel-header">
+            <h2>Signed Ledger</h2>
+            <p id="ledger-summary"></p>
+          </div>
+          <div id="ledger" class="ledger"></div>
+        </section>
+      </main>
+    </div>
+
+    <template id="identity-template">
+      <article class="identity-card">
+        <div class="identity-top">
+          <strong data-label></strong>
+          <span data-kind class="kind"></span>
+        </div>
+        <p data-did class="mono"></p>
+        <p data-issuer></p>
+        <div data-caps class="tag-row"></div>
+      </article>
+    </template>
+
+    <template id="action-template">
+      <article class="action-card">
+        <div class="action-head">
+          <strong data-label></strong>
+          <span data-mode></span>
+        </div>
+        <p data-summary></p>
+        <div class="action-row">
+          <button data-run>Run</button>
+          <label class="approval-toggle">
+            <input data-approval type="checkbox" />
+            <span>Approve if prompted</span>
+          </label>
+        </div>
+      </article>
+    </template>
+
+    <template id="ledger-template">
+      <article class="ledger-event">
+        <div class="ledger-top">
+          <strong data-type></strong>
+          <span data-index></span>
+        </div>
+        <p data-actor class="mono"></p>
+        <p data-payload></p>
+        <div class="ledger-meta">
+          <span data-verify></span>
+          <code data-signature></code>
+        </div>
+      </article>
+    </template>
+
+    <script src="./app.js"></script>
+  </body>
+  </html>

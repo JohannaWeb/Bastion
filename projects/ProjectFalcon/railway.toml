@@ -1,0 +1,8 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/ping"
+restartPolicyType = "ON_FAILURE"
+numReplicas = 1

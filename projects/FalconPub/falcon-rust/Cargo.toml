@@ -1,0 +1,33 @@
+[package]
+name = "falcon-rust"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "falcon-rust"
+path = "src/main.rs"
+
+[dependencies]
+# Web framework
+axum = { version = "0.7", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Crypto — native ES256K (secp256k1 + ECDSA)
+k256 = { version = "0.13", features = ["ecdsa", "sha256"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+base64ct = { version = "1", features = ["alloc"] }
+sha2 = "0.10"
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "chrono"] }
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
