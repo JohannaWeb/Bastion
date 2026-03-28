@@ -1,10 +1,8 @@
 # Bastion
 
-Bastion is a sovereign developer stack.
+## First Product in Production
 
-Bastion is building developer infrastructure for a world where humans and agents write software together. The core idea is simple: developer tools should know who is acting, what they are allowed to do, and how to prove what happened.
-
-This repository is the monorepo for that thesis.
+https://juntos.chat/
 
 ## The Thesis
 
