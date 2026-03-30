@@ -1,6 +1,10 @@
 # Bastion — Sovereign Developer Infrastructure
 
 **Juntos is live:** https://juntos.chat
+<img width="1998" height="1046" alt="image" src="https://github.com/user-attachments/assets/8f352359-f8a1-46d2-8990-524230e2254f" />
+<img width="1355" height="898" alt="image" src="https://github.com/user-attachments/assets/5eda6cad-a27e-45a8-983c-0461e4ac8a1a" />
+<img width="1025" height="782" alt="image" src="https://github.com/user-attachments/assets/0b0a9623-b46a-46c0-90f1-f5274dd078a4" />
+
 
 ---
 
