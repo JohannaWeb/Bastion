@@ -1,0 +1,136 @@
+<svg viewBox="0 0 1200 400" xmlns="http://www.w3.org/2000/svg" width="1200" height="400">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Syne:wght@800&amp;family=DM+Mono:wght@400;500&amp;display=swap');
+    </style>
+
+    <!-- Grid pattern -->
+    <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M 60 0 L 0 0 0 60" fill="none" stroke="rgba(200,255,0,0.05)" stroke-width="1"/>
+    </pattern>
+
+    <!-- Glow filter -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="softglow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="20" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Gradient -->
+    <radialGradient id="centerGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="rgba(200,255,0,0.08)"/>
+      <stop offset="100%" stop-color="rgba(10,10,10,0)"/>
+    </radialGradient>
+
+    <linearGradient id="accentLine" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="rgba(200,255,0,0)"/>
+      <stop offset="20%" stop-color="#c8ff00"/>
+      <stop offset="80%" stop-color="#c8ff00"/>
+      <stop offset="100%" stop-color="rgba(200,255,0,0)"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="400" fill="#0a0a0a"/>
+
+  <!-- Grid -->
+  <rect width="1200" height="400" fill="url(#grid)"/>
+
+  <!-- Center radial glow -->
+  <rect width="1200" height="400" fill="url(#centerGlow)"/>
+
+  <!-- Accent glow blob -->
+  <ellipse cx="600" cy="200" rx="300" ry="120" fill="rgba(200,255,0,0.04)" filter="url(#softglow)"/>
+
+  <!-- Top accent line -->
+  <rect x="0" y="0" width="1200" height="1" fill="url(#accentLine)" opacity="0.6"/>
+
+  <!-- Bottom accent line -->
+  <rect x="0" y="399" width="1200" height="1" fill="url(#accentLine)" opacity="0.3"/>
+
+  <!-- Left decorative bracket -->
+  <g opacity="0.15">
+    <line x1="80" y1="120" x2="60" y2="120" stroke="#c8ff00" stroke-width="1.5"/>
+    <line x1="60" y1="120" x2="60" y2="280" stroke="#c8ff00" stroke-width="1.5"/>
+    <line x1="60" y1="280" x2="80" y2="280" stroke="#c8ff00" stroke-width="1.5"/>
+  </g>
+
+  <!-- Right decorative bracket -->
+  <g opacity="0.15">
+    <line x1="1120" y1="120" x2="1140" y2="120" stroke="#c8ff00" stroke-width="1.5"/>
+    <line x1="1140" y1="120" x2="1140" y2="280" stroke="#c8ff00" stroke-width="1.5"/>
+    <line x1="1140" y1="280" x2="1120" y2="280" stroke="#c8ff00" stroke-width="1.5"/>
+  </g>
+
+  <!-- Corner dots -->
+  <circle cx="100" cy="100" r="2" fill="#c8ff00" opacity="0.3"/>
+  <circle cx="1100" cy="100" r="2" fill="#c8ff00" opacity="0.3"/>
+  <circle cx="100" cy="300" r="2" fill="#c8ff00" opacity="0.3"/>
+  <circle cx="1100" cy="300" r="2" fill="#c8ff00" opacity="0.3"/>
+
+  <!-- Small accent dot -->
+  <circle cx="600" cy="134" r="3" fill="#c8ff00" filter="url(#glow)"/>
+
+  <!-- Tag line above -->
+  <text
+    x="600"
+    y="158"
+    text-anchor="middle"
+    font-family="'DM Mono', monospace"
+    font-size="11"
+    font-weight="400"
+    fill="#c8ff00"
+    letter-spacing="4"
+  >SOVEREIGN COMPUTING STACK</text>
+
+  <!-- Main wordmark -->
+  <text
+    x="600"
+    y="255"
+    text-anchor="middle"
+    font-family="'Syne', 'Arial Black', sans-serif"
+    font-size="110"
+    font-weight="800"
+    fill="#f0ede8"
+    letter-spacing="-2"
+  >BASTION</text>
+
+  <!-- Accent dot on the I -->
+  <rect x="556" y="264" width="88" height="3" fill="#c8ff00" opacity="0.15" rx="1"/>
+
+  <!-- Sub line -->
+  <text
+    x="600"
+    y="306"
+    text-anchor="middle"
+    font-family="'DM Mono', monospace"
+    font-size="12"
+    font-weight="400"
+    fill="#555"
+    letter-spacing="3"
+  >OS · BROWSER · IDE · AI · PROTOCOL</text>
+
+  <!-- Bottom: live badge -->
+  <g transform="translate(600, 342)">
+    <rect x="-52" y="-12" width="104" height="22" rx="2" fill="none" stroke="rgba(200,255,0,0.25)" stroke-width="1"/>
+    <circle cx="-36" cy="0" r="3" fill="#c8ff00"/>
+    <text
+      x="-26"
+      y="4"
+      font-family="'DM Mono', monospace"
+      font-size="10"
+      fill="#c8ff00"
+      letter-spacing="2"
+    >LIVE · MIT · PORTO</text>
+  </g>
+</svg>
