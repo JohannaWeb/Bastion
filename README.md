@@ -4,7 +4,7 @@
 
 https://juntos.chat/
 ## Images
-<img width="484" height="1076" alt="image" src="https://github.com/user-attachments/assets/6431a339-5867-4114-b8ea-de05132bed9c" />
+<img width="2352" height="1040" alt="image" src="https://github.com/user-attachments/assets/d745aaa1-727b-46f9-8edd-d870f93236e0" />
 <img width="1355" height="898" alt="image" src="https://github.com/user-attachments/assets/62f6e676-713c-40b5-92f8-a5cdfb4dc843" />
 <img width="1025" height="782" alt="image" src="https://github.com/user-attachments/assets/bc677843-7c69-4b61-9137-4d44f0d8538e" />
 
