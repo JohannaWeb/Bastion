@@ -1,3 +1,7 @@
+[![MIT License](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
+[![Live](https://img.shields.io/badge/juntos.chat-live-brightgreen)](https://juntos.chat)
+[![Rust](https://img.shields.io/badge/rust-systems-orange)](https://github.com/JohannaWeb/Bastion)
+[![Java](https://img.shields.io/badge/java-AT%20Protocol-blue)](https://github.com/JohannaWeb/ProjectFalcon)
 # Bastion — Sovereign Developer Infrastructure
 
 **Juntos is live:** https://juntos.chat
