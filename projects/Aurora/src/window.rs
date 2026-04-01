@@ -50,20 +50,88 @@ impl<'a> AuroraApp<'a> {
         let height = surface.config.height;
         let device_handle = &self.context.devices[surface.dev_id];
 
+        let mut scene = Scene::new();
+
+        // Transform the scene based on scroll
+        let transform = Affine::translate((0.0, -self.scroll_y));
+
+        // Paint the layout
+        scene.push_layer(
+            Fill::NonZero,
+            vello::peniko::BlendMode::default(),
+            1.0,
+            transform,
+            &vello::kurbo::Rect::new(0.0, 0.0, width as f64, 10000.0),
+        );
+        GpuPainter::paint(self.layout.root(), &mut scene);
+        scene.pop_layer();
+
         let surface_texture = surface
             .surface
             .get_current_texture()
             .expect("failed to get surface texture");
 
-        // Clear the surface to white
+        let render_params = vello::RenderParams {
+            base_color: Color::WHITE,
+            antialiasing_method: vello::AaConfig::Msaa16,
+            width,
+            height,
+        };
+
+        if self.renderers[surface.dev_id].is_none() {
+            self.renderers[surface.dev_id] = Some(
+                Renderer::new(
+                    &device_handle.device,
+                    RendererOptions {
+                        use_cpu: false,
+                        antialiasing_support: vello::AaSupport::all(),
+                        num_init_threads: None,
+                        pipeline_cache: None,
+                    },
+                )
+                .expect("failed to create vello renderer"),
+            );
+        }
+
+        // Create intermediate RGBA8Unorm texture for vello to render to
+        let intermediate_texture = device_handle.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("render_target"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+
+        let intermediate_view = intermediate_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let renderer = self.renderers[surface.dev_id].as_mut().unwrap();
+        renderer
+            .render_to_texture(
+                &device_handle.device,
+                &device_handle.queue,
+                &scene,
+                &intermediate_view,
+                &render_params,
+            )
+            .expect("failed to render to intermediate texture");
+
+        // Blit RGBA intermediate to BGRA swapchain using a render pass
+        // We'll render a fullscreen quad that samples the intermediate and outputs to swapchain
         let swapchain_view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = device_handle.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("clear_encoder"),
+            label: Some("blit_encoder"),
         });
 
         {
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("clear_pass"),
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("blit_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &swapchain_view,
                     resolve_target: None,
@@ -77,6 +145,8 @@ impl<'a> AuroraApp<'a> {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+            // Just clear to white for now - prevents black screen
+            drop(render_pass);
         }
 
         device_handle.queue.submit(std::iter::once(encoder.finish()));

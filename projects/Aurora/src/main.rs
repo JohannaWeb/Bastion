@@ -68,9 +68,8 @@ fn main() {
         // (Note: For this session we focus on initial render and one-shot execution)
     }
 
-    // Render using text framebuffer (works great!)
-    let framebuffer = Painter::paint(&layout);
-    println!("{}", framebuffer);
+    // Open GPU window for rendering
+    window::open(&layout);
 }
 
 fn demo_html() -> &'static str {
