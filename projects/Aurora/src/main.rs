@@ -79,24 +79,23 @@ fn demo_html() -> &'static str {
         <html>
             <head>
                 <style>
-                    body { background-color: #f8f5eb; color: #282828; margin: 20px; }
-                    h1 { color: #d26428; font-size: 28px; }
-                    h2 { color: #282828; font-size: 20px; }
+                    body { background-color: #f8f5eb; color: #282828; }
+                    h1, h2, h3 { font-weight: bold; color: #d26428; }
+                    h1 { font-size: 28px; }
+                    h2, h3 { font-size: 20px; }
+                    strong, em { color: #646e7d; }
                 </style>
             </head>
             <body>
-                <h1>Attribute Parsing Test</h1>
-                <h2>Test 1: URL with > character</h2>
-                <a href="http://example.com?foo=bar>test">Link with > in URL</a>
-
-                <h2>Test 2: Data attributes with quotes</h2>
-                <div data-config='{"key":"value"}'>JSON config</div>
-                <div data-text="String with 'single' quotes">Data attr</div>
-
-                <h2>Test 3: Multiple attributes</h2>
-                <img src="test.jpg" alt="Image > description" title="Title with 'quotes'">
-
-                <h2>Done!</h2>
+                <h1>Comma-Separated Selectors Test</h1>
+                <h2>This h2 gets styles from h1, h2, h3</h2>
+                <h3>This h3 also gets those styles</h3>
+                <p>Regular paragraph text</p>
+                <p><strong>Bold text</strong> should be styled</p>
+                <p><em>Italic text</em> should be styled</p>
+                <a href="">Link element</a>
+                <p>Before fix: comma selectors were skipped</p>
+                <p>After fix: each selector gets its own rule</p>
             </body>
         </html>
     "#
