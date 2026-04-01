@@ -23,17 +23,19 @@ struct VertexOutput {
 
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    var uv = vec2<f32>(f32(vertex_index & 1u), f32((vertex_index >> 1u) & 1u));
-    var position = vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
-    position.y = -position.y;
+    // Generate fullscreen quad vertices
+    let x = f32((vertex_index & 1u) << 1u);
+    let y = f32((vertex_index & 2u));
+    let uv = vec2<f32>(x / 2.0, y / 2.0);
+    let position = vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
     return VertexOutput(position, uv);
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    var rgba = textureSample(tex, samp, in.uv);
-    // Swizzle RGBA to BGRA
-    return vec4<f32>(rgba.b, rgba.g, rgba.r, rgba.a);
+    let rgba = textureSample(tex, samp, in.uv);
+    // Output as-is (or swizzle if needed)
+    return rgba;
 }
 "#;
 use winit::{
