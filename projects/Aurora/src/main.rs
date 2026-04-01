@@ -71,7 +71,7 @@ fn main() {
 
     // Render using text framebuffer instead of GPU window
     let framebuffer = Painter::paint(&layout);
-    println!("\n{}", framebuffer);
+    println!("{}", framebuffer);
 }
 
 fn demo_html() -> &'static str {
@@ -79,23 +79,13 @@ fn demo_html() -> &'static str {
         <html>
             <head>
                 <style>
-                    body { background-color: #f8f5eb; color: #282828; }
-                    h1, h2, h3 { font-weight: bold; color: #d26428; }
-                    h1 { font-size: 28px; }
-                    h2, h3 { font-size: 20px; }
-                    strong, em { color: #646e7d; }
+                    h1 { color: #d26428; font-weight: bold; }
                 </style>
             </head>
             <body>
-                <h1>Comma-Separated Selectors Test</h1>
-                <h2>This h2 gets styles from h1, h2, h3</h2>
-                <h3>This h3 also gets those styles</h3>
-                <p>Regular paragraph text</p>
-                <p><strong>Bold text</strong> should be styled</p>
-                <p><em>Italic text</em> should be styled</p>
-                <a href="">Link element</a>
-                <p>Before fix: comma selectors were skipped</p>
-                <p>After fix: each selector gets its own rule</p>
+                <h1>Text Wrapping with Inline Elements</h1>
+                <p>This paragraph has multiple words that wrap across lines and includes <strong>bold text</strong> and <em>italic text</em> interspersed throughout to test proper spacing preservation.</p>
+                <p>Another test: <strong>Start</strong> with bold, <em>then</em> italic, and finally <strong>more bold</strong> at the end.</p>
             </body>
         </html>
     "#
