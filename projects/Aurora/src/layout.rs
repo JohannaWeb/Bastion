@@ -1,12 +1,12 @@
-use crate::css::{DisplayMode, EdgeSizes, Margin, MarginValue, StyleMap, TextAlign};
+use crate::css::{AlignItems, DisplayMode, EdgeSizes, FlexDirection, JustifyContent, Margin, MarginValue, StyleMap, TextAlign};
 use crate::style::{StyleTree, StyledNode};
 use std::fmt::{self, Display, Formatter};
 
 #[allow(dead_code)]
 const DEFAULT_VIEWPORT_WIDTH: f32 = 1200.0;
 const BLOCK_VERTICAL_PADDING: f32 = 6.0;
-const TEXT_CHAR_WIDTH: f32 = 6.0;
-const TEXT_LINE_HEIGHT: f32 = 10.0;
+const TEXT_CHAR_WIDTH: f32 = 8.0;
+const TEXT_LINE_HEIGHT: f32 = 12.0;
 const INLINE_BOX_HEIGHT: f32 = 10.0;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +29,7 @@ pub struct LayoutBox {
 enum LayoutKind {
     Viewport,
     Block { tag_name: String },
+    InlineBlock { tag_name: String },
     Inline { tag_name: String },
     Image {
         alt: Option<String>,
@@ -105,7 +106,7 @@ impl LayoutBox {
         let styles = node.styles().clone();
         match styles.display_mode() {
             DisplayMode::None => None,
-            mode if tag_name == "img" => Some(Self::layout_image(
+            mode if tag_name == "img" || tag_name == "svg" || tag_name == "canvas" || tag_name == "iframe" || tag_name == "textarea" || tag_name == "input" || tag_name == "button" => Some(Self::layout_image(
                 node,
                 styles,
                 node.styles().margin(),
@@ -117,6 +118,32 @@ impl LayoutBox {
                 mode,
             )),
             DisplayMode::Block => Some(Self::layout_container(
+                LayoutKind::Block {
+                    tag_name: tag_name.to_string(),
+                },
+                styles,
+                node.styles().margin(),
+                node.styles().border_width(),
+                node.styles().padding(),
+                node.children(),
+                x,
+                y,
+                available_width,
+            )),
+            DisplayMode::InlineBlock => Some(Self::layout_container(
+                LayoutKind::InlineBlock {
+                    tag_name: tag_name.to_string(),
+                },
+                styles,
+                node.styles().margin(),
+                node.styles().border_width(),
+                node.styles().padding(),
+                node.children(),
+                x,
+                y,
+                available_width,
+            )),
+            DisplayMode::Flex => Some(Self::layout_flex_container(
                 LayoutKind::Block {
                     tag_name: tag_name.to_string(),
                 },
@@ -143,6 +170,157 @@ impl LayoutBox {
         }
     }
 
+    fn layout_flex_container(
+        kind: LayoutKind,
+        styles: StyleMap,
+        margin: Margin,
+        border: EdgeSizes,
+        padding: EdgeSizes,
+        children: &[StyledNode],
+        x: f32,
+        y: f32,
+        available_width: f32,
+    ) -> Self {
+        let mut rect_x = x + margin.left.to_px();
+        let rect_y = y + margin.top;
+        let available_rect_width = (available_width - margin.horizontal()).max(0.0);
+        let default_content_width = (available_rect_width - padding.horizontal() - border.horizontal()).max(0.0);
+        let content_width = clamp_content_width(&styles, default_content_width, default_content_width);
+
+        if let (MarginValue::Auto, MarginValue::Auto) = (margin.left, margin.right) {
+            let total_box_width = content_width + padding.horizontal() + border.horizontal();
+            let free_space = (available_width - total_box_width).max(0.0);
+            rect_x = x + free_space / 2.0;
+        }
+
+        let content_x = rect_x + border.left + padding.left;
+        let content_y = rect_y + border.top + padding.top;
+
+        let direction = styles.flex_direction();
+        let justify = styles.justify_content();
+        let align = styles.align_items();
+
+        let mut layout_children = Vec::new();
+
+        // Pass 1: Parse children sizes
+        let mut total_child_width: f32 = 0.0;
+        let mut total_child_height: f32 = 0.0;
+        let mut max_child_height: f32 = 0.0;
+        let mut max_child_width: f32 = 0.0;
+
+        for child in children {
+            if child.tag_name() == Some("style".to_string()) || child.tag_name() == Some("script".to_string()) || child.styles().display_mode() == DisplayMode::None {
+                continue;
+            }
+            if let Some(layout_child) = Self::from_styled_node(child, 0.0, 0.0, content_width) {
+
+                let child_w = layout_child.total_width();
+                total_child_width += child_w;
+                total_child_height += layout_child.total_height();
+                max_child_height = max_child_height.max(layout_child.total_height());
+                max_child_width = max_child_width.max(child_w);
+                layout_children.push(layout_child);
+            }
+        }
+
+        let inner_height = if direction == FlexDirection::Row {
+            max_child_height
+        } else {
+            total_child_height
+        };
+        let resolved_content_height = clamp_content_height(&styles, inner_height).max(BLOCK_VERTICAL_PADDING);
+
+        // Pass 2: Position items
+        if direction == FlexDirection::Row {
+            let free_width = (content_width - total_child_width).max(0.0);
+            let (mut current_x, spacing) = match justify {
+                JustifyContent::FlexEnd => (content_x + free_width, 0.0),
+                JustifyContent::Center => (content_x + free_width / 2.0, 0.0),
+                JustifyContent::SpaceBetween => {
+                    let sp = if layout_children.len() > 1 { free_width / (layout_children.len() as f32 - 1.0) } else { 0.0 };
+                    (content_x, sp)
+                }
+                JustifyContent::SpaceAround => {
+                    let sp = if !layout_children.is_empty() { free_width / layout_children.len() as f32 } else { 0.0 };
+                    (content_x + sp / 2.0, sp)
+                }
+                _ => (content_x, 0.0),
+            };
+
+            for child in &mut layout_children {
+                let new_x = current_x + child.margin.left.to_px();
+                let new_y = match align {
+                    AlignItems::Center => {
+                        let free_y = (resolved_content_height - child.total_height()).max(0.0);
+                        content_y + free_y / 2.0 + child.margin.top
+                    }
+                    AlignItems::FlexEnd => {
+                        let free_y = (resolved_content_height - child.total_height()).max(0.0);
+                        content_y + free_y + child.margin.top
+                    }
+                    _ => content_y + child.margin.top,
+                };
+                
+                let dx = new_x - child.rect.x;
+                let dy = new_y - child.rect.y;
+                child.offset(dx, dy);
+                
+                current_x += child.total_width() + spacing;
+            }
+        } else {
+            let free_height = (resolved_content_height - total_child_height).max(0.0);
+            let (mut current_y, spacing) = match justify {
+                JustifyContent::FlexEnd => (content_y + free_height, 0.0),
+                JustifyContent::Center => (content_y + free_height / 2.0, 0.0),
+                JustifyContent::SpaceBetween => {
+                    let sp = if layout_children.len() > 1 { free_height / (layout_children.len() as f32 - 1.0) } else { 0.0 };
+                    (content_y, sp)
+                }
+                JustifyContent::SpaceAround => {
+                    let sp = if !layout_children.is_empty() { free_height / layout_children.len() as f32 } else { 0.0 };
+                    (content_y + sp / 2.0, sp)
+                }
+                _ => (content_y, 0.0),
+            };
+
+            for child in &mut layout_children {
+                let new_y = current_y + child.margin.top;
+                let new_x = match align {
+                    AlignItems::Center => {
+                        let free_w = (content_width - child.total_width()).max(0.0);
+                        content_x + free_w / 2.0 + child.margin.left.to_px()
+                    }
+                    AlignItems::FlexEnd => {
+                        let free_w = (content_width - child.total_width()).max(0.0);
+                        content_x + free_w + child.margin.left.to_px()
+                    }
+                    _ => content_x + child.margin.left.to_px(),
+                };
+
+                let dx = new_x - child.rect.x;
+                let dy = new_y - child.rect.y;
+                child.offset(dx, dy);
+
+                current_y += child.total_height() + spacing;
+            }
+        }
+
+        Self {
+            kind,
+            rect: Rect {
+                x: rect_x,
+                y: rect_y,
+                width: (content_width + padding.horizontal() + border.horizontal()).min(available_rect_width),
+                height: border.top + padding.top + resolved_content_height + padding.bottom + border.bottom,
+            },
+            styles,
+            margin,
+            border,
+            padding,
+            children: layout_children,
+        }
+    }
+
     fn layout_image(
         node: &StyledNode,
         styles: StyleMap,
@@ -160,11 +338,11 @@ impl LayoutBox {
         let width_hint = node
             .attribute("width").as_deref()
             .and_then(parse_html_length_px)
-            .unwrap_or(available_width);
+            .unwrap_or(120.0);
         let height_hint = node
             .attribute("height").as_deref()
             .and_then(parse_html_length_px)
-            .unwrap_or(96.0);
+            .unwrap_or(40.0);
         let content_width = clamp_content_width(&styles, width_hint, available_rect_width);
         let content_height = clamp_content_height(&styles, height_hint);
 
@@ -280,7 +458,7 @@ impl LayoutBox {
                             TextAlign::Left => 0.0,
                         };
                         if offset > 0.0 {
-                            layout_child.rect.x += offset;
+                            layout_child.offset(offset, 0.0);
                         }
                     }
 
@@ -421,7 +599,7 @@ impl LayoutBox {
 
                 if offset > 0.0 {
                     for b in &mut layout_children[line_start..line_end] {
-                        b.rect.x += offset;
+                        b.offset(offset, 0.0);
                     }
                 }
                 line_start = line_end;
@@ -609,7 +787,8 @@ impl LayoutBox {
         for word in words_with_spaces {
             let candidate = format!("{}{}", current_line, word);
             let candidate_width = candidate.chars().count() as f32 * char_width;
-            let used_width = *line_x - x;
+            let current_line_width = current_line.chars().count() as f32 * char_width;
+            let used_width = (*line_x - x) + current_line_width;
             let remaining_width = (available_width - used_width).max(char_width);
 
             // Only wrap if we have content on the line and the new word won't fit
@@ -659,6 +838,14 @@ impl LayoutBox {
                 writeln!(
                     f,
                     "{indent}block<{tag_name}> {} {}",
+                    format_styles(&self.styles),
+                    self.rect
+                )?;
+            }
+            LayoutKind::InlineBlock { tag_name } => {
+                writeln!(
+                    f,
+                    "{indent}inline-block<{tag_name}> {} {}",
                     format_styles(&self.styles),
                     self.rect
                 )?;
@@ -778,11 +965,20 @@ impl LayoutBox {
     pub fn is_image(&self) -> bool {
         matches!(self.kind, LayoutKind::Image { .. })
     }
+
+    pub fn offset(&mut self, dx: f32, dy: f32) {
+        self.rect.x += dx;
+        self.rect.y += dy;
+        for child in &mut self.children {
+            child.offset(dx, dy);
+        }
+    }
 }
 
 fn char_width_from_styles(styles: &StyleMap) -> f32 {
-    // Default font-size assumed 16px → char_width = font_size / 2.0
-    let base_width = styles.font_size_px().map(|s| s / 2.0).unwrap_or(TEXT_CHAR_WIDTH);
+    let font_size = styles.font_size_px().filter(|&s| s > 0.0).unwrap_or(16.0);
+    // Use 1:1 aspect ratio for the 8x8 bitmap font
+    let base_width = font_size;
 
     // Apply font-weight multiplier
     if styles.font_weight() == "bold" || styles.font_weight() == "700" {

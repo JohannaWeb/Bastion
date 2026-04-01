@@ -144,6 +144,10 @@ pub fn fetch_html(url: &str, identity: &Identity) -> Result<String, FetchError> 
 }
 
 pub fn fetch_string(url: &str, identity: &Identity) -> Result<String, FetchError> {
+    if let Some(path) = url.strip_prefix("file://") {
+        return std::fs::read_to_string(path).map_err(FetchError::Io);
+    }
+    
     if !identity.default_capabilities.contains(&Capability::NetworkAccess) {
         return Err(FetchError::InvalidUrl(format!(
             "Identity {} lacks network.access capability",

@@ -21,6 +21,7 @@ unsafe impl Trace for NodeHandle {
 impl Finalize for NodeHandle {}
 
 pub struct BoaRuntime {
+
     context: Context,
     #[allow(dead_code)]
     document: NodePtr,
@@ -29,6 +30,35 @@ pub struct BoaRuntime {
 impl BoaRuntime {
     pub fn new(document: NodePtr) -> Self {
         let mut context = Context::default();
+        
+        let xhr_polyfill = r#"
+            globalThis.XMLHttpRequest = function() {
+                this.readyState = 0;
+                this.status = 0;
+                this.responseText = "";
+                this.onreadystatechange = null;
+                this.onload = null;
+            };
+            globalThis.XMLHttpRequest.prototype.open = function(method, url) {
+                this._method = method;
+                this._url = url;
+                this.readyState = 1;
+            };
+            globalThis.XMLHttpRequest.prototype.send = function() {
+                // For now, intercept network requests and return a mock synchronous response
+                this.readyState = 4;
+                this.status = 200;
+                this.responseText = "{}"; // Send empty JSON object mock
+                if (typeof this.onreadystatechange === 'function') {
+                    this.onreadystatechange();
+                }
+                if (typeof this.onload === 'function') {
+                    this.onload();
+                }
+            };
+            globalThis.XMLHttpRequest.prototype.setRequestHeader = function() {};
+        "#;
+        let _ = context.eval(Source::from_bytes(xhr_polyfill.as_bytes()));
         
         // Console.log
         let console = ObjectInitializer::new(&mut context)
@@ -56,7 +86,11 @@ impl BoaRuntime {
                 doc_handle
             ), JsString::from("getElementById"), 1)
             .build();
-        context.register_global_property(JsString::from("document"), doc_obj, Attribute::all());
+        let _ = context.register_global_property(JsString::from("document"), doc_obj, Attribute::all());
+
+        // Make window = globalObject to alias all globals correctly
+        let global_obj = context.global_object().clone();
+        let _ = context.register_global_property(JsString::from("window"), global_obj, Attribute::all());
 
         Self { context, document }
     }

@@ -105,27 +105,62 @@ fn paint_element(layout_box: &LayoutBox, scene: &mut Scene) {
     }
 }
 
+use vello::kurbo::BezPath;
+
 fn paint_text(layout_box: &LayoutBox, text: &str, scene: &mut Scene) {
     let r = layout_box.rect();
     let styles = layout_box.styles();
     let text_color = parse_color(styles.get("color").unwrap_or("black"));
     
-    let char_width = 8.0;
-    let char_height = 12.0;
+    let char_count = text.chars().count();
+    let char_step = if char_count > 0 {
+        r.width as f64 / char_count as f64
+    } else {
+        8.0
+    };
     
-    for (i, _ch) in text.chars().enumerate() {
-        let x = r.x as f64 + (i as f64 * char_width);
-        let y = r.y as f64 + 2.0;
+    let font_size = styles.font_size_px().filter(|&s| s > 0.0).unwrap_or(16.0);
+    // Use 1:1 aspect ratio for the 8x8 bitmap font
+    let scale_x = font_size as f64 / 8.0;
+    let scale_y = font_size as f64 / 8.0;
+
+    let bold = styles.font_weight() == "bold" || styles.font_weight() == "bolder" || styles.font_weight() == "700" || styles.font_weight().parse::<i32>().unwrap_or(400) >= 600;
+    let italic = styles.font_style() == "italic";
+    
+    let mut path = BezPath::new();
+    
+    for (i, ch) in text.chars().enumerate() {
+        let start_x = r.x as f64 + (i as f64 * char_step);
+        let start_y = r.y as f64 + 2.0 * scale_y; 
         
-        let glyph_rect = vello::kurbo::Rect::new(x, y, x + char_width - 1.0, y + char_height);
-        scene.fill(
-            Fill::NonZero,
-            vello::kurbo::Affine::IDENTITY,
-            text_color,
-            None,
-            &glyph_rect,
-        );
+        let glyph = crate::font::get_glyph(ch);
+        
+        for (row, &bits) in glyph.iter().enumerate() {
+            let py = start_y + (row as f64 * scale_y);
+            let italic_offset = if italic { (7.0 - row as f64) / 3.0 * scale_x } else { 0.0 };
+            
+            for col in 0..8 {
+                if (bits & (1 << (7 - col))) != 0 {
+                    let px = start_x + (col as f64 * scale_x) + italic_offset;
+                    let p_width = if bold { 1.5 * scale_x } else { 1.0 * scale_x };
+                    
+                    path.move_to((px, py));
+                    path.line_to((px + p_width, py));
+                    path.line_to((px + p_width, py + scale_y));
+                    path.line_to((px, py + scale_y));
+                    path.close_path();
+                }
+            }
+        }
     }
+    
+    scene.fill(
+        Fill::NonZero,
+        vello::kurbo::Affine::IDENTITY,
+        text_color,
+        None,
+        &path,
+    );
 }
 
 fn paint_image(layout_box: &LayoutBox, scene: &mut Scene) {

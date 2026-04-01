@@ -69,6 +69,7 @@ fn main() {
     }
 
     // Open GPU window for rendering
+    println!("{layout}");
     window::open(&layout);
 }
 

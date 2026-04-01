@@ -26,7 +26,8 @@ impl Stylesheet {
              h2 { font-size: 24px; font-weight: bold; color: ink; } \
              h3 { font-size: 18px; font-weight: bold; color: ink; } \
              li { display: block; margin: 4px 0; } \
-             div, section, article { display: block; border-radius: 6px; }"
+             div, section, article { display: block; border-radius: 6px; } \
+             head, style, script, link, meta, title, noscript, template { display: none; }"
         )
     }
 
@@ -257,8 +258,37 @@ impl Margin {
 pub enum DisplayMode {
     Block,
     Inline,
+    InlineBlock,
+    Flex,
     None,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FlexDirection {
+    #[default]
+    Row,
+    Column,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JustifyContent {
+    #[default]
+    FlexStart,
+    Center,
+    FlexEnd,
+    SpaceBetween,
+    SpaceAround,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AlignItems {
+    #[default]
+    Stretch,
+    FlexStart,
+    Center,
+    FlexEnd,
+}
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextAlign {
@@ -275,9 +305,36 @@ impl StyleMap {
 
     pub fn display_mode(&self) -> DisplayMode {
         match self.0.get("display").map(String::as_str) {
-            Some("inline") => DisplayMode::Inline,
+            Some("inline") | Some("inline-block") => DisplayMode::Inline,
+            Some("flex") => DisplayMode::Flex,
             Some("none") => DisplayMode::None,
             _ => DisplayMode::Block,
+        }
+    }
+
+    pub fn flex_direction(&self) -> FlexDirection {
+        match self.0.get("flex-direction").map(String::as_str) {
+            Some("column") => FlexDirection::Column,
+            _ => FlexDirection::Row,
+        }
+    }
+
+    pub fn justify_content(&self) -> JustifyContent {
+        match self.0.get("justify-content").map(String::as_str) {
+            Some("center") => JustifyContent::Center,
+            Some("flex-end") => JustifyContent::FlexEnd,
+            Some("space-between") => JustifyContent::SpaceBetween,
+            Some("space-around") => JustifyContent::SpaceAround,
+            _ => JustifyContent::FlexStart,
+        }
+    }
+
+    pub fn align_items(&self) -> AlignItems {
+        match self.0.get("align-items").map(String::as_str) {
+            Some("flex-start") => AlignItems::FlexStart,
+            Some("center") => AlignItems::Center,
+            Some("flex-end") => AlignItems::FlexEnd,
+            _ => AlignItems::Stretch,
         }
     }
 
