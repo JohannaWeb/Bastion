@@ -4,10 +4,10 @@ use std::fmt::{self, Display, Formatter};
 
 #[allow(dead_code)]
 const DEFAULT_VIEWPORT_WIDTH: f32 = 1200.0;
-const BLOCK_VERTICAL_PADDING: f32 = 8.0;
-const TEXT_CHAR_WIDTH: f32 = 8.0;
-const TEXT_LINE_HEIGHT: f32 = 14.0;
-const INLINE_BOX_HEIGHT: f32 = 14.0;
+const BLOCK_VERTICAL_PADDING: f32 = 6.0;
+const TEXT_CHAR_WIDTH: f32 = 6.0;
+const TEXT_LINE_HEIGHT: f32 = 10.0;
+const INLINE_BOX_HEIGHT: f32 = 10.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LayoutTree {
