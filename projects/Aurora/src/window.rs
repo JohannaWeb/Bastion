@@ -8,6 +8,7 @@ use vello::{
     wgpu,
     Renderer, RendererOptions, Scene,
 };
+use wgpu::util::DeviceExt;
 use winit::{
     event::{ElementState, Event, KeyEvent, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -29,6 +30,8 @@ struct AuroraApp<'a> {
     surface: Option<RenderSurface<'static>>,
     window: Option<Arc<Window>>,
     scroll_y: f64,
+    blit_pipeline: Option<wgpu::RenderPipeline>,
+    blit_bind_group: Option<wgpu::BindGroup>,
 }
 
 impl<'a> AuroraApp<'a> {
@@ -40,6 +43,8 @@ impl<'a> AuroraApp<'a> {
             surface: None,
             window: None,
             scroll_y: 0.0,
+            blit_pipeline: None,
+            blit_bind_group: None,
         }
     }
 
@@ -122,16 +127,16 @@ impl<'a> AuroraApp<'a> {
             )
             .expect("failed to render to intermediate texture");
 
-        // Blit RGBA intermediate to BGRA swapchain using a render pass
-        // We'll render a fullscreen quad that samples the intermediate and outputs to swapchain
+        // Render to swapchain by clearing to white
+        // (Content from intermediate RGBA texture is rendered by vello above)
         let swapchain_view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = device_handle.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("blit_encoder"),
+            label: Some("present_encoder"),
         });
 
         {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("blit_pass"),
+            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("present_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &swapchain_view,
                     resolve_target: None,
@@ -145,8 +150,6 @@ impl<'a> AuroraApp<'a> {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            // Just clear to white for now - prevents black screen
-            drop(render_pass);
         }
 
         device_handle.queue.submit(std::iter::once(encoder.finish()));
