@@ -1,17 +1,17 @@
-# Opus
+# Opus — Sovereign Developer Runtime
 
-Prototype foundation for an AI-native IDE built around sovereign identity, capability-bound execution, and signed provenance.
+Opus is the flagship developer runtime for the **Bastion sovereign developer stack**. It provides a capability-bound execution environment built around identity, approvals, and signed provenance.
 
-## Product thesis
+## The Thesis
 
-Most AI IDEs compete on editor ergonomics and model integration. This prototype starts from a different premise:
+Most AI developer tools are wrappers around editors they do not control. Opus takes the opposite approach: the editor is a policy-enforced window into a trusted runtime.
 
-- Every human, agent, plugin, and organization has a DID-like identity.
-- Every action request declares explicit capabilities.
-- Every risky action can be routed through policy and human approval.
-- Every request, approval, denial, and execution is recorded as a signed event.
+- **Identity-First**: Every developer, agent, plugin, and organization has a verifiable DID-like identity.
+- **Capability-Bound**: Every action request declares explicit capabilities (e.g., READ /home, EXEC shell).
+- **Audit-Native**: Every request, approval, denial, and execution is recorded as a signed event in a local ledger.
+- **Sovereign**: The runtime is owned by the developer, not rented from a cloud provider.
 
-That is the wedge against editors that treat AI as an assistant bolted onto a text buffer.
+That is the wedge: not just AI autocomplete, but a trustworthy execution model for a world where humans and agents work together.
 
 ## Current implementation
 

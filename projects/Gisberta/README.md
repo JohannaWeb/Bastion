@@ -1,8 +1,6 @@
 # Gisberta
 
-`Gisberta` is a pastel pink browser build based on Servo's official `servoshell`, written in Rust.
-
-The project name honors Gisberta Salce Junior, a trans woman murdered in 2006. This build keeps that tribute visible in the new-tab page and browser branding.
+`Gisberta` is a custom browser build based on Servo's official `servoshell`, written in Rust.
 
 ## Build
 
@@ -16,7 +14,7 @@ cargo run -p servoshell --bin gisberta
 
 - The browser chrome in `servoshell` now uses a pastel pink theme.
 - The window title, app metadata, and binary name are branded as `Gisberta`.
-- The built-in `servo:newtab` page was rewritten as a tribute landing page with search and quick links.
+- The built-in `servo:newtab` page was rewritten with custom search and quick links.
 
 ## Notes
 

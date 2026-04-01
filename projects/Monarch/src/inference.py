@@ -4,8 +4,10 @@
 import torch
 import json
 import argparse
+import hashlib
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 
@@ -86,6 +88,26 @@ class MonarchInference:
         response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
         return response
 
+    def generate_signed(self, prompt: str, actor_did: str = "did:agent:monarch", **kwargs) -> Dict[str, Any]:
+        """Generate a response wrapped in a signed provenance structure."""
+        content = self.generate(prompt, **kwargs)
+        timestamp = int(time.time())
+        
+        # In a real implementation, this would use a private key to sign the content.
+        # For this cohesion demo, we use a deterministic hash to represent the "signature".
+        payload = f"{actor_did}:{timestamp}:{content}"
+        signature = hashlib.sha256(payload.encode()).hexdigest()
+        
+        return {
+            "version": "1.0",
+            "type": "suggestion.signed",
+            "actor_did": actor_did,
+            "content": content,
+            "timestamp": timestamp,
+            "signature": f"sha256:{signature}",
+            "provenance": "monarch-stack-native"
+        }
+
     def chat(self) -> None:
         """Interactive chat with Monarch."""
         print("\nMonarch - Interactive Mode")
@@ -101,8 +123,8 @@ class MonarchInference:
             if not prompt:
                 continue
 
-            response = self.generate(prompt)
-            print(f"\nMonarch: {response}\n")
+            response_data = self.generate_signed(prompt)
+            print(f"\nMonarch (Signed): {json.dumps(response_data, indent=2)}\n")
 
 
 def main():

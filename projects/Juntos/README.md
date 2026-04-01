@@ -41,7 +41,14 @@ Working on it daily.
 ---
 
 ## Vision
-Being the future of web 4 made by a trans woman in her bedroom.
+
+Juntos is more than a chat app; it is the product surface for the **Bastion sovereign developer stack**.
+
+Being the future of web 4 made by a trans woman in her bedroom, Juntos implements a new framework for AI alignment:
+
+- **Radical Alignment**: Training and aligning AI through the lens of bell hooks' **Radical Love**.
+- **Care Ethics**: Grounding coordination and moderation in a framework of care and mutual support rather than punitive centralized control.
+- **Sovereign Moderation**: Using the adversarial trust protocol from `ProjectFalcon` to empower communities to define and enforce their own safety boundaries without centralized authorities.
 
 ---
 

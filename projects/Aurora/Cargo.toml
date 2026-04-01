@@ -1,0 +1,16 @@
+[package]
+name = "aurora"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rustls = { version = "0.23", features = ["ring"] }
+webpki-roots = "0.26"
+wgpu = "23.0"
+winit = "0.30.5"
+vello = "0.7.0"
+pollster = "0.3"
+flate2 = "1.0"
+boa_engine = "0.19"
+boa_gc = "0.19"
+opus = { path = "../Opus" }

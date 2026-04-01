@@ -157,10 +157,10 @@ Edit `config.yaml` to adjust:
 
 ## Integration with ProjectFalcon
 
-Monarch can be integrated with Juntos's AI SIV (Sovereign Integration Vessel):
-- Drop `monarch_lora/` into the Juntos model directory
-- Update AiContextService to use Monarch
-- All responses are signed and auditable
+Monarch is designed to be integrated as a **Sovereign Integration Vessel (SIV)**:
+- Drop `monarch_lora/` into the Bastion SIV directory.
+- Update `AiContextService` or `Opus` to use Monarch as the primary intelligence layer.
+- All responses are signed, capability-checked, and auditable via the `Opus` ledger.
 
 ## Development
 

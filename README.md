@@ -46,7 +46,9 @@ The core bet: execution should be capability-bound, actions should be signed and
 **Monarch** — Mistral-based fine-tune trained on the Bastion codebase. 4-bit quantization, aggressive KV cache compression, RAG. Stack-native intelligence, not generic assistant behavior. Runs on a 4060 Ti.
 
 ### Client
-**Aurora / Gisberta** — Hand-rolled Rust browser engine and sovereign shell. No Chromium. No WebView. Full HTML parser, CSS cascade engine, GPU rendering pipeline, box model layout. DID-native identity and AT Protocol integration built in.
+**Aurora** — Hand-rolled Rust browser engine and sovereign shell. No Chromium. No WebView. Full HTML parser, CSS cascade engine, GPU rendering pipeline, box model layout. DID-native identity and AT Protocol integration built in.
+
+**Gisberta** — A custom browser build based on Servo.
 
 ### Compute
 **MonarchOS** — 64-bit Rust kernel. Custom process scheduler, memory manager, decentralized identity runtime. The long-term machine layer.
@@ -67,6 +69,19 @@ This is not a collection of side projects. It is one vertically integrated stack
 
 ---
 
+## System Orchestration
+
+Bastion is not just a collection of repositories; it is a live coordination system.
+
+1.  **Identity**: `ProjectFalcon` (JVM) handles the heavy lifting of AT Protocol identity and cryptographic trust graphs.
+2.  **Runtime**: `Opus` (Rust/Tauri) consumes those identities to enforce capability-bound execution of AI and developer actions.
+3.  **Social**: `Juntos` (Web) provides the human interface for community coordination using the same `ProjectFalcon` substrate.
+4.  **Interop**: `Falcon-Bridge` ensures these identities and actions can be seen and verified across the Fediverse via `FalconPub`.
+5.  **Intelligence**: `Monarch` (LLM) is fine-tuned to reason within this specific trust model, signing its suggestions through `Opus`.
+6.  **Surface**: `Aurora` (Rust Engine) and `MonarchOS` (Rust Kernel) provide the owned hardware and client surface where these protocols terminate securely.
+
+---
+
 ## Research
 
 Three papers published March 2026:
@@ -81,6 +96,7 @@ Three papers published March 2026:
 
 ```
 projects/
+  Aurora/
   Falcon-Bridge/
   FalconPub/
   Gisberta/

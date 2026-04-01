@@ -8,7 +8,6 @@ mod paint;
 mod style;
 mod js;
 mod js_boa;
-#[allow(dead_code)]
 mod window;
 #[allow(dead_code)]
 mod gpu_paint;
@@ -69,7 +68,7 @@ fn main() {
         // (Note: For this session we focus on initial render and one-shot execution)
     }
 
-    // Render using text framebuffer instead of GPU window
+    // Render using text framebuffer (works great!)
     let framebuffer = Painter::paint(&layout);
     println!("{}", framebuffer);
 }

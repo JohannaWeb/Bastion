@@ -1,46 +1,51 @@
-# Juntos
+# ProjectFalcon
 
-**The LGBT decentralized community.**
+**World-first native JVM implementation of the AT Protocol.**
 
-![Juntos Community]<img width="1957" height="1357" alt="image" src="https://github.com/user-attachments/assets/0e0dfd7e-d888-4c71-807a-cdf58d4634dc" />
+ProjectFalcon is the coordination and trust substrate for the Bastion ecosystem. It provides a high-performance, adversarial-resistant identity and communication layer designed for human-agent collaboration.
 
-**[Live Demo] https://juntos.chat/
+## The Thesis
 
-Writing this without AI using my own keyboard.
+Most decentralized identity systems suffer from bootstrapping vulnerabilities and Sybil attacks. ProjectFalcon addresses this by implementing an **Adversarial Algorithmic Trust Protocol** (see [Research Paper](https://github.com/JohannaWeb/ProjectFalcon/releases/tag/v1.0-paper)).
 
-As a trans woman I have felt discriminated and repudiated in many web communities. Juntos uses the AT protocol and technology I built to position itself as a safe space for queer people like me.
+## Stack
 
----
+- **Runtime**: Java 21 LTS
+- **Framework**: Spring Boot 4.0.3
+- **Crypto**: Hand-rolled ES256K / secp256k1 verification (no JVM default)
+- **Database**: JPA / Hibernate with high-concurrency support
+- **Identity**: Native DID:PLC and DID:WEB resolution
 
-## The Idea
+## Key Features
 
-Safe inclusive spaces for trans, non-binary people and anyone in the LGBT+ rainbow.
+- **STT (Sovereign Trust Tracking)**: A graph-based trust model with temporal decay and Sybil resistance.
+- **AT Protocol Native**: Built from the ground up to follow the AT Protocol specification without proprietary wrappers.
+- **AI Agent Mesh**: Designed to give AI agents first-class identities that can sign actions and be audited.
+- **High Throughput**: Optimized for the real-time requirements of decentralized social and developer coordination.
 
-No centralized company governance. The AT protocol and this new communities extension will bring freedom and hope to the digital world the same way Bluesky did.
+## Getting Started
 
-## Quick Start (Local Run)
+### Prerequisites
 
-To run Juntos locally without Docker, use the provided PowerShell script:
+- Java 21+
+- Maven 3.9+
 
-1. Open PowerShell in the root directory.
-2. Run the start script:
-```powershell
-.\run_juntos.ps1
+### Build
+
+```bash
+mvn clean install
 ```
 
-The script will check for **Java 21 LTS** and **Node.js**, install dependencies, and launch the backend and frontend in separate windows.
+### Run (juntos-alpha)
 
-## Why
-
-The LGBT community needs digital spaces that aren't controlled by central authorities. Switching platforms often means losing community ties and history. Juntos separates collaboration from the platform.
-
-## Status
-
-Working on it daily.
+```bash
+cd juntos-alpha
+mvn spring-boot:run
+```
 
 ## Vision
 
-Being the future of web 4 made by a trans woman in her bedroom.
+To be the most robust, cryptographically sound implementation of the AT Protocol in the JVM ecosystem, powering a world where trust is computed, not assigned.
 
 ## License
 
