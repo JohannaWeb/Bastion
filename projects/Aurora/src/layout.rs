@@ -212,14 +212,48 @@ impl LayoutBox {
             if child.tag_name() == Some("style".to_string()) || child.tag_name() == Some("script".to_string()) || child.styles().display_mode() == DisplayMode::None {
                 continue;
             }
-            if let Some(layout_child) = Self::from_styled_node(child, 0.0, 0.0, content_width) {
 
-                let child_w = layout_child.total_width();
-                total_child_width += child_w;
-                total_child_height += layout_child.total_height();
-                max_child_height = max_child_height.max(layout_child.total_height());
-                max_child_width = max_child_width.max(child_w);
-                layout_children.push(layout_child);
+            // Flex item sizing per CSS Flex spec:
+            // - If child has explicit width/max-width, measure with that constraint
+            // - Otherwise, do two-pass measurement: measure to get intrinsic width, then re-layout at that width
+            let has_explicit_width = child.styles().width_px().is_some() || child.styles().max_width_px().is_some();
+
+            if !has_explicit_width {
+                // First pass: measure at large width to see what children need
+                if let Some(measured) = Self::from_styled_node(child, 0.0, 0.0, 10000.0) {
+                    // Compute intrinsic width from measured layout
+                    let intrinsic = if measured.children.is_empty() {
+                        measured.rect.width + measured.padding.horizontal() + measured.border.horizontal()
+                    } else {
+                        let child_max = measured.children.iter()
+                            .map(|c| c.total_width())
+                            .fold(0.0_f32, f32::max);
+                        child_max + measured.padding.horizontal() + measured.border.horizontal()
+                    };
+
+                    // Cap to container width
+                    let final_width = intrinsic.min(content_width);
+
+                    // Second pass: re-layout at the correct width
+                    if let Some(layout_child) = Self::from_styled_node(child, 0.0, 0.0, final_width) {
+                        let child_w = layout_child.total_width();
+                        total_child_width += child_w;
+                        total_child_height += layout_child.total_height();
+                        max_child_height = max_child_height.max(layout_child.total_height());
+                        max_child_width = max_child_width.max(child_w);
+                        layout_children.push(layout_child);
+                    }
+                }
+            } else {
+                // Has explicit width, measure normally at container width
+                if let Some(layout_child) = Self::from_styled_node(child, 0.0, 0.0, content_width) {
+                    let child_w = layout_child.total_width();
+                    total_child_width += child_w;
+                    total_child_height += layout_child.total_height();
+                    max_child_height = max_child_height.max(layout_child.total_height());
+                    max_child_width = max_child_width.max(child_w);
+                    layout_children.push(layout_child);
+                }
             }
         }
 
