@@ -37,6 +37,10 @@ impl Node {
         })))
     }
 
+    pub fn element(tag_name: impl Into<String>, children: Vec<NodePtr>) -> NodePtr {
+        Self::element_with_attributes(tag_name, BTreeMap::new(), children)
+    }
+
     pub fn text(value: impl Into<String>) -> NodePtr {
         Rc::new(RefCell::new(Self::Text(value.into())))
     }

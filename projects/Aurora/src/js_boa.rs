@@ -10,27 +10,54 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 #[derive(Clone)]
-struct NodeHandle {
-    inner: NodePtr,
+struct NodeRegistry {
+    nodes: Rc<RefCell<BTreeMap<u32, NodePtr>>>,
+    next_id: Rc<RefCell<u32>>,
 }
 
-unsafe impl Trace for NodeHandle {
+unsafe impl Trace for NodeRegistry {
     empty_trace!();
 }
+impl Finalize for NodeRegistry {}
 
-impl Finalize for NodeHandle {}
+#[derive(Clone)]
+struct NodeCapture {
+    node: NodePtr,
+    registry: NodeRegistry,
+}
+
+unsafe impl Trace for NodeCapture {
+    empty_trace!();
+}
+impl Finalize for NodeCapture {}
+
+#[derive(Clone)]
+struct DocCapture {
+    document: NodePtr,
+    registry: NodeRegistry,
+}
+
+unsafe impl Trace for DocCapture {
+    empty_trace!();
+}
+impl Finalize for DocCapture {}
 
 pub struct BoaRuntime {
-
     context: Context,
     #[allow(dead_code)]
     document: NodePtr,
+    registry: NodeRegistry,
 }
 
 impl BoaRuntime {
     pub fn new(document: NodePtr) -> Self {
         let mut context = Context::default();
+        let registry = NodeRegistry {
+            nodes: Rc::new(RefCell::new(BTreeMap::new())),
+            next_id: Rc::new(RefCell::new(1)),
+        };
         
+        // ... (XHR polyfill same as before) ...
         let xhr_polyfill = r#"
             globalThis.XMLHttpRequest = function() {
                 this.readyState = 0;
@@ -45,10 +72,9 @@ impl BoaRuntime {
                 this.readyState = 1;
             };
             globalThis.XMLHttpRequest.prototype.send = function() {
-                // For now, intercept network requests and return a mock synchronous response
                 this.readyState = 4;
                 this.status = 200;
-                this.responseText = "{}"; // Send empty JSON object mock
+                this.responseText = "{}";
                 if (typeof this.onreadystatechange === 'function') {
                     this.onreadystatechange();
                 }
@@ -68,36 +94,126 @@ impl BoaRuntime {
                 Ok(JsValue::undefined())
             }), JsString::from("log"), 1)
             .build();
-        // context.create_builtin_function(JsString::from("fetch"), 1, fetch);
-        context.register_global_property(JsString::from("console"), console, Attribute::all());
+        let _ = context.register_global_property(JsString::from("console"), console, Attribute::all());
+
+        // Event listener no-ops for window/document
+        let add_event_listener = NativeFunction::from_fn_ptr(|_this, _args, _context| Ok(JsValue::undefined()));
+        let dummy = ObjectInitializer::new(&mut context)
+            .function(add_event_listener.clone(), JsString::from("f"), 2)
+            .build();
+        let add_event_listener_js = dummy.get(JsString::from("f"), &mut context).unwrap();
 
         // Document
-        let doc_handle = NodeHandle { inner: document.clone() };
+        let doc_capture = DocCapture { document: document.clone(), registry: registry.clone() };
         let doc_obj = ObjectInitializer::new(&mut context)
             .function(NativeFunction::from_copy_closure_with_captures(
-                |_this, args, captures, _context| {
+                |_this, args, captures, context| {
                     let id = args.get(0).and_then(|v| v.as_string()).map(|s| s.to_std_string_escaped()).unwrap_or_default();
-                    if let Some(node) = find_by_id(&captures.inner, &id) {
-                         Ok(JsValue::null())
+                    if let Some(node) = find_by_id(&captures.document, &id) {
+                         Ok(create_js_node(node, &captures.registry, context))
                     } else {
                         Ok(JsValue::null())
                     }
                 },
-                doc_handle
+                doc_capture.clone()
             ), JsString::from("getElementById"), 1)
+            .function(NativeFunction::from_copy_closure_with_captures(
+                |_this, args, captures, context| {
+                    let tag = args.get(0).and_then(|v| v.as_string()).map(|s| s.to_std_string_escaped()).unwrap_or_default();
+                    let node = Node::element(tag, vec![]);
+                    Ok(create_js_node(node, &captures.registry, context))
+                },
+                doc_capture.clone()
+            ), JsString::from("createElement"), 1)
+            .function(NativeFunction::from_copy_closure_with_captures(
+                |_this, _args, captures, context| {
+                    Ok(create_js_node(captures.document.clone(), &captures.registry, context))
+                },
+                doc_capture
+            ), JsString::from("documentElement"), 0)
+            .function(NativeFunction::from_fn_ptr(|_this, args, _context| {
+                let text = args.get(0).and_then(|v| v.as_string()).map(|s| s.to_std_string_escaped()).unwrap_or_default();
+                Ok(JsValue::from(JsString::from(text)))
+            }), JsString::from("createTextNode"), 1)
+            .function(add_event_listener.clone(), JsString::from("addEventListener"), 2)
+            .function(add_event_listener.clone(), JsString::from("removeEventListener"), 2)
             .build();
         let _ = context.register_global_property(JsString::from("document"), doc_obj, Attribute::all());
 
-        // Make window = globalObject to alias all globals correctly
+        // Window
         let global_obj = context.global_object().clone();
-        let _ = context.register_global_property(JsString::from("window"), global_obj, Attribute::all());
+        let _ = context.register_global_property(JsString::from("window"), global_obj.clone(), Attribute::all());
+        let _ = context.register_global_property(JsString::from("global"), global_obj.clone(), Attribute::all());
+        
+        let _ = global_obj.set(JsString::from("addEventListener"), add_event_listener_js.clone(), false, &mut context);
+        let _ = global_obj.set(JsString::from("removeEventListener"), add_event_listener_js, false, &mut context);
 
-        Self { context, document }
+        let location = ObjectInitializer::new(&mut context)
+            .property(JsString::from("href"), JsValue::from(JsString::from("http://localhost/")), Attribute::all())
+            .property(JsString::from("pathname"), JsValue::from(JsString::from("/")), Attribute::all())
+            .build();
+        let _ = context.register_global_property(JsString::from("location"), location, Attribute::all());
+
+        let navigator = ObjectInitializer::new(&mut context)
+            .property(JsString::from("userAgent"), JsValue::from(JsString::from("Aurora/0.1")), Attribute::all())
+            .build();
+        let _ = context.register_global_property(JsString::from("navigator"), navigator, Attribute::all());
+
+        Self { context, document, registry }
     }
 
     pub fn execute(&mut self, script: &str) -> JsResult<JsValue> {
         self.context.eval(Source::from_bytes(script))
     }
+}
+
+fn create_js_node(node: NodePtr, registry: &NodeRegistry, context: &mut Context) -> JsValue {
+    let id = {
+        let mut next_id = registry.next_id.borrow_mut();
+        let id = *next_id;
+        *next_id += 1;
+        registry.nodes.borrow_mut().insert(id, node.clone());
+        id
+    };
+
+    let capture = NodeCapture { node: node.clone(), registry: registry.clone() };
+
+    ObjectInitializer::new(context)
+        .property(JsString::from("__node_id"), id, Attribute::READONLY | Attribute::NON_ENUMERABLE)
+        .function(NativeFunction::from_copy_closure_with_captures(
+            |_this, args, captures, _context| {
+                let parent_ptr = &captures.node;
+                let registry = &captures.registry;
+                let child_js = args.get(0).cloned().unwrap_or(JsValue::null());
+                
+                if let Some(child_id_val) = child_js.as_object().and_then(|o| o.get(JsString::from("__node_id"), _context).ok()) {
+                    if let Some(child_id) = child_id_val.as_number() {
+                        if let Some(child_ptr) = registry.nodes.borrow().get(&(child_id as u32)).cloned() {
+                            let mut parent = parent_ptr.borrow_mut();
+                            if let Node::Element(el) = &mut *parent {
+                                el.children.push(child_ptr);
+                            }
+                        }
+                    }
+                }
+                Ok(child_js)
+            },
+            capture.clone()
+        ), JsString::from("appendChild"), 1)
+        .function(NativeFunction::from_copy_closure_with_captures(
+            |_this, args, captures, _context| {
+                let name = args.get(0).and_then(|v| v.as_string()).map(|s| s.to_std_string_escaped()).unwrap_or_default();
+                let value = args.get(1).and_then(|v| v.as_string()).map(|s| s.to_std_string_escaped()).unwrap_or_default();
+                let mut n = captures.node.borrow_mut();
+                if let Node::Element(el) = &mut *n {
+                    el.attributes.insert(name, value);
+                }
+                Ok(JsValue::undefined())
+            },
+            capture
+        ), JsString::from("setAttribute"), 2)
+        .build()
+        .into()
 }
 
 fn find_by_id(node: &NodePtr, id: &str) -> Option<NodePtr> {
@@ -126,36 +242,3 @@ fn find_by_id(node: &NodePtr, id: &str) -> Option<NodePtr> {
        _ => None
    }
 }
-
-/*
-fn create_js_node(node: NodePtr, context: &mut Context) -> JsValue {
-    let handle = NodeHandle { inner: node };
-    
-    let getter = NativeFunction::from_copy_closure_with_captures(|_this, _args, captures, _context| {
-        Ok(JsValue::from(JsString::from(captures.inner.borrow().to_string())))
-    }, handle.clone());
-    let getter_js = context.create_builtin_function(getter, 0, JsString::from("get_innerText"), &[]);
-
-    let setter = NativeFunction::from_copy_closure_with_captures(|_this, args, captures, _context| {
-        let new_text = args.get(0).and_then(|v| v.as_string()).map(|s| s.to_std_string_escaped()).unwrap_or_default();
-        let mut n = captures.inner.borrow_mut();
-        match &mut *n {
-            Node::Element(el) => {
-                el.children = vec![Node::text(new_text)];
-            }
-            _ => {}
-        }
-        Ok(JsValue::undefined())
-    }, handle);
-    let setter_js = context.create_builtin_function(JsString::from("set_innerText"), 1, setter, None);
-
-    ObjectInitializer::new(context)
-        .accessor(JsString::from("innerText"), 
-            Some(getter_js),
-            Some(setter_js),
-            Attribute::all()
-        )
-        .build()
-        .into()
-}
-*/

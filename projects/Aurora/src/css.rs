@@ -291,6 +291,13 @@ pub enum AlignItems {
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BoxSizing {
+    #[default]
+    ContentBox,
+    BorderBox,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextAlign {
     #[default]
     Left,
@@ -343,6 +350,13 @@ impl StyleMap {
             Some("center") => TextAlign::Center,
             Some("right") => TextAlign::Right,
             _ => TextAlign::Left,
+        }
+    }
+
+    pub fn box_sizing(&self) -> BoxSizing {
+        match self.0.get("box-sizing").map(String::as_str) {
+            Some("border-box") => BoxSizing::BorderBox,
+            _ => BoxSizing::ContentBox,
         }
     }
 
@@ -451,6 +465,77 @@ impl StyleMap {
 
     pub fn visibility(&self) -> &str {
         self.get("visibility").unwrap_or("visible")
+    }
+
+    pub fn resolve_vars(&mut self, ancestors: &[&StyleMap]) {
+        let mut resolved = BTreeMap::new();
+        for (name, value) in &self.0 {
+            if value.contains("var(") {
+                if let Some(new_value) = self.resolve_single_value(value, ancestors) {
+                    resolved.insert(name.clone(), new_value);
+                }
+            }
+        }
+        for (name, value) in resolved {
+            self.0.insert(name, value);
+        }
+    }
+
+    fn resolve_single_value(&self, value: &str, ancestors: &[&StyleMap]) -> Option<String> {
+        if !value.contains("var(") {
+            return Some(value.to_string());
+        }
+
+        let mut result = String::new();
+        let mut last_end = 0;
+        
+        // Very basic var() parser: find "var(--name)"
+        // Note: Real CSS allows fallback: var(--name, fallback)
+        while let Some(start) = value[last_end..].find("var(") {
+            let start = last_end + start;
+            result.push_str(&value[last_end..start]);
+            
+            let var_content_start = start + 4;
+            if let Some(end) = value[var_content_start..].find(')') {
+                let end = var_content_start + end;
+                let var_expr = value[var_content_start..end].trim();
+                
+                // Handle fallback: var(--name, fallback)
+                let (var_name, _fallback) = if let Some((name, fall)) = var_expr.split_once(',') {
+                    (name.trim(), Some(fall.trim()))
+                } else {
+                    (var_expr, None)
+                };
+
+                if let Some(val) = self.lookup_variable(var_name, ancestors) {
+                    result.push_str(&val);
+                } else {
+                    // If no value and no fallback, keep the var() expr or empty?
+                    // Standard says it should be 'invalid at computed value time'.
+                    // We'll leave it as is for now.
+                    result.push_str(&value[start..end+1]);
+                }
+                last_end = end + 1;
+            } else {
+                break;
+            }
+        }
+        result.push_str(&value[last_end..]);
+        Some(result)
+    }
+
+    fn lookup_variable(&self, name: &str, ancestors: &[&StyleMap]) -> Option<String> {
+        // Look in current map
+        if let Some(val) = self.0.get(name) {
+            return Some(val.clone());
+        }
+        // Look in ancestors (closest first)
+        for ancestor in ancestors.iter().rev() {
+            if let Some(val) = ancestor.0.get(name) {
+                return Some(val.clone());
+            }
+        }
+        None
     }
 
     fn edge_sizes(&self, prefix: &str) -> EdgeSizes {

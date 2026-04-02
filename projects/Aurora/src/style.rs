@@ -29,7 +29,7 @@ pub struct StyledNode {
 impl StyleTree {
     pub fn from_dom(document: &crate::dom::NodePtr, stylesheet: &Stylesheet) -> Self {
         Self {
-            root: StyledNode::from_dom_node(std::rc::Rc::clone(document), stylesheet, &[], InheritedStyles::default()),
+            root: StyledNode::from_dom_node(std::rc::Rc::clone(document), stylesheet, &[], InheritedStyles::default(), &[]),
         }
     }
 
@@ -75,8 +75,9 @@ impl StyledNode {
     fn from_dom_node(
         node: crate::dom::NodePtr,
         stylesheet: &Stylesheet,
-        ancestors: &[crate::css::ElementData],
+        element_ancestors: &[crate::css::ElementData],
         inherited: InheritedStyles,
+        style_ancestors: &[&StyleMap],
     ) -> Self {
         let node_borrow = node.borrow();
         match &*node_borrow {
@@ -92,8 +93,9 @@ impl StyledNode {
                             Self::from_dom_node(
                                 child,
                                 stylesheet,
-                                ancestors,
+                                element_ancestors,
                                 inherited.clone(),
+                                style_ancestors,
                             )
                         })
                         .collect(),
@@ -104,7 +106,10 @@ impl StyledNode {
                     tag_name: element.tag_name.clone(),
                     attributes: element.attributes.clone(),
                 };
-                let mut styles = stylesheet.styles_for(&current_data, ancestors);
+                let mut styles = stylesheet.styles_for(&current_data, element_ancestors);
+                
+                // Resolve CSS variables before inheritance!
+                styles.resolve_vars(style_ancestors);
 
                 // Inherit typography traits...
                 if styles.get("color").is_none() {
@@ -138,8 +143,8 @@ impl StyledNode {
                     }
                 }
 
-                let mut next_ancestors = ancestors.to_vec();
-                next_ancestors.push(current_data);
+                let mut next_element_ancestors = element_ancestors.to_vec();
+                next_element_ancestors.push(current_data);
 
                 let next_inherited = InheritedStyles {
                     color: styles.get("color").map(ToOwned::to_owned),
@@ -155,21 +160,29 @@ impl StyledNode {
                 let element_children = element.children.clone();
                 drop(node_borrow);
 
-                Self {
+                let mut node_to_return = Self {
                     node,
                     styles,
-                    children: element_children
-                        .into_iter()
-                        .map(|child| {
-                            Self::from_dom_node(
-                                child,
-                                stylesheet,
-                                &next_ancestors,
-                                next_inherited.clone(),
-                            )
-                        })
-                        .collect(),
-                }
+                    children: Vec::new(),
+                };
+
+                let mut next_style_ancestors = style_ancestors.to_vec();
+                next_style_ancestors.push(&node_to_return.styles);
+
+                node_to_return.children = element_children
+                    .into_iter()
+                    .map(|child| {
+                        Self::from_dom_node(
+                            child,
+                            stylesheet,
+                            &next_element_ancestors,
+                            next_inherited.clone(),
+                            &next_style_ancestors,
+                        )
+                    })
+                    .collect();
+
+                node_to_return
             }
             Node::Text(text) => {
                 let mut styles = StyleMap::default();
@@ -238,6 +251,10 @@ mod tests {
     use crate::css::Stylesheet;
     use crate::dom::{Node, NodePtr};
     use std::collections::BTreeMap;
+
+    fn element(tag: &str, children: Vec<NodePtr>) -> NodePtr {
+        Node::element(tag, children)
+    }
 
     #[test]
     fn computes_descendant_matched_styles() {

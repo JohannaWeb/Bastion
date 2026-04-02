@@ -357,9 +357,6 @@ fn paint_surface(layout_box: &LayoutBox, tag_name: &str, framebuffer: &mut Frame
             border_char,
         );
     }
-
-    let padding_rect = layout_box.padding_rect();
-    framebuffer.fill_rect(padding_rect, background_char);
 }
 
 fn paint_input(layout_box: &LayoutBox, tag_name: &str, framebuffer: &mut FrameBuffer) {
@@ -414,6 +411,7 @@ fn box_fill_char(tag_name: &str, color: Option<&str>) -> char {
         "section" => '+',
         "h1" => '#',
         "p" => '-',
+        // Intentional NES-style fallback: use the first character of the tag name (e.g. <div> -> 'd')
         _ => tag_name.chars().next().unwrap_or('?'),
     }
 }
@@ -427,11 +425,7 @@ fn background_fill_char(tag_name: &str, background_color: Option<&str>, color: O
         return bg.chars().next().unwrap_or(' ');
     }
 
-    if tag_name == "body" || tag_name == "html" {
-        return ' ';
-    }
-
-    ' '
+    box_fill_char(tag_name, color)
 }
 
 fn border_fill_char(tag_name: &str, border_color: Option<&str>, color: Option<&str>) -> char {
@@ -453,6 +447,10 @@ mod tests {
     use crate::dom::Node;
     use crate::layout::LayoutTree;
     use crate::style::StyleTree;
+
+    fn element(tag: &str, children: Vec<crate::dom::NodePtr>) -> crate::dom::NodePtr {
+        crate::dom::Node::element(tag, children)
+    }
 
     #[test]
     fn paints_text_into_framebuffer() {

@@ -23,9 +23,11 @@ use opus::domain::{Capability, Identity};
 use std::env;
 
 fn main() {
+    println!("Aurora: Starting up...");
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
+    println!("Aurora: Crypto provider installed.");
 
     let identity = Identity::new(
         "did:human:johanna",
@@ -56,16 +58,38 @@ fn main() {
     // Boa JS Integration
     let scripts = extract_scripts(&dom);
     if !scripts.is_empty() {
-        println!("Boa: Executing {} scripts...", scripts.len());
+        println!("Boa: Processing {} scripts...", scripts.len());
         let mut runtime = js_boa::BoaRuntime::new(Rc::clone(&dom));
-        for script_source in scripts {
-            if let Err(e) = runtime.execute(&script_source) {
+        for (source, is_url) in scripts {
+            let script_content = if is_url {
+                if let Some(base) = url_arg.as_deref() {
+                    match crate::fetch::resolve_relative_url(base, &source) {
+                        Ok(full_url) => {
+                            println!("Boa: Fetching external script: {}", full_url);
+                            match crate::fetch::fetch_string(&full_url, &identity) {
+                                Ok(content) => content,
+                                Err(e) => {
+                                    eprintln!("Failed to fetch script {}: {}", full_url, e);
+                                    continue;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to resolve script URL {}: {}", source, e);
+                            continue;
+                        }
+                    }
+                } else {
+                    continue;
+                }
+            } else {
+                source
+            };
+
+            if let Err(e) = runtime.execute(&script_content) {
                 eprintln!("JS Error: {}", e);
             }
         }
-
-        // Re-layout after potential DOM mutations
-        // (Note: For this session we focus on initial render and one-shot execution)
     }
 
     // Open GPU window for rendering
@@ -79,32 +103,59 @@ fn demo_html() -> &'static str {
             <head>
                 <style>
                     h1 { color: #d26428; font-weight: bold; }
+                    h2 { color: #2E3440; font-size: 24px; margin-top: 20px; }
+                    code { color: #BF616A; }
                 </style>
             </head>
             <body>
-                <h1>Text Wrapping with Inline Elements</h1>
+                <h1>Aurora Browser - Unicode & Symbol Test</h1>
+
+                <h2>Basic Typography</h2>
                 <p>This paragraph has multiple words that wrap across lines and includes <strong>bold text</strong> and <em>italic text</em> interspersed throughout to test proper spacing preservation.</p>
-                <p>Another test: <strong>Start</strong> with bold, <em>then</em> italic, and finally <strong>more bold</strong> at the end.</p>
+
+                <h2>Unicode Symbols</h2>
+                <p>Weather: ☀ sun ☁ cloud ☂ umbrella ☃ snowman</p>
+                <p>Stars: ★ filled ☆ empty ☇ comet</p>
+                <p>Arrows: ← → ↑ ↓ ↔ ↕</p>
+                <p>Math: ± × ÷ ≈ ≠ ≡ ∞</p>
+
+                <h2>Box Drawing</h2>
+                <p>─ horizontal bar │ vertical bar</p>
+                <p>┌─┐ ├─┤ └─┘ box corners and tees</p>
+                <p>┼ cross symbol</p>
+
+                <h2>Special Characters</h2>
+                <p>Symbols: © ® ° · – —</p>
+                <p>Bullets: • ◦ ‣</p>
+                <p>Degrees: 32° F = 0° C</p>
+
+                <h2>Mixed Content</h2>
+                <p>Temperature: 72° Status: ☀ Clear skies with ← wind from west.</p>
+                <p>Box: ┌─────┐ filled │ with │ ├─────┤ lines └─────┘</p>
             </body>
         </html>
     "#
 }
 
-fn extract_scripts(node: &crate::dom::NodePtr) -> Vec<String> {
+fn extract_scripts(node: &crate::dom::NodePtr) -> Vec<(String, bool)> {
     let mut scripts = Vec::new();
-    fn walk(node: &crate::dom::NodePtr, scripts: &mut Vec<String>) {
+    fn walk(node: &crate::dom::NodePtr, scripts: &mut Vec<(String, bool)>) {
         let node_borrow = node.borrow();
         match &*node_borrow {
             crate::dom::Node::Element(el) if el.tag_name == "script" => {
-                let mut content = String::new();
-                for child in &el.children {
-                    let child_borrow = child.borrow();
-                    if let crate::dom::Node::Text(t) = &*child_borrow {
-                        content.push_str(t);
+                if let Some(src) = el.attributes.get("src") {
+                    scripts.push((src.clone(), true));
+                } else {
+                    let mut content = String::new();
+                    for child in &el.children {
+                        let child_borrow = child.borrow();
+                        if let crate::dom::Node::Text(t) = &*child_borrow {
+                            content.push_str(t);
+                        }
                     }
-                }
-                if !content.is_empty() {
-                    scripts.push(content);
+                    if !content.is_empty() {
+                        scripts.push((content, false));
+                    }
                 }
             }
             crate::dom::Node::Element(el) => {

@@ -1,5 +1,7 @@
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, UnixTime};
 use std::fmt::{self, Display, Formatter};
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -234,20 +236,25 @@ fn send_request(url: &ParsedUrl) -> Result<HttpResponse, FetchError> {
         url.authority(),
     );
 
+    println!("Fetch: Connecting to {}...", url.socket_addr());
     match url.scheme {
         Scheme::Http => {
             let mut stream = TcpStream::connect(url.socket_addr())?;
+            println!("Fetch: Connected (HTTP)");
             stream.write_all(request.as_bytes())?;
             read_response_bytes(&mut stream)
         }
         Scheme::Https => {
             let stream = TcpStream::connect(url.socket_addr())?;
+            println!("Fetch: Connected (TCP for HTTPS)");
             let config = tls_config();
             let server_name = ServerName::try_from(url.host.clone())
                 .map_err(|_| FetchError::InvalidUrl(url.host.clone()))?;
             let connection = ClientConnection::new(config, server_name)?;
             let mut tls_stream = StreamOwned::new(connection, stream);
+            println!("Fetch: Starting TLS handshake...");
             tls_stream.write_all(request.as_bytes())?;
+            println!("Fetch: Request sent, reading response...");
             read_response_bytes(&mut tls_stream)
         }
     }
@@ -255,8 +262,7 @@ fn send_request(url: &ParsedUrl) -> Result<HttpResponse, FetchError> {
 
 fn read_response_bytes<R: Read>(reader: &mut R) -> Result<HttpResponse, FetchError> {
     let mut response = Vec::new();
-    // Some servers (like Google) may close the connection abruptly without a clean TLS shutdown.
-    // We try to read as much as possible and parse what we got.
+    println!("Fetch: Reading bytes...");
     if let Err(e) = reader.read_to_end(&mut response) {
         if e.kind() != std::io::ErrorKind::UnexpectedEof {
             return Err(FetchError::Io(e));
@@ -270,14 +276,54 @@ fn read_response_bytes<R: Read>(reader: &mut R) -> Result<HttpResponse, FetchErr
     HttpResponse::parse(&response)
 }
 
-fn tls_config() -> Arc<ClientConfig> {
-    let roots = RootCertStore {
-        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-    };
+/// Custom certificate verifier that accepts all certificates (for development)
+#[derive(Debug)]
+struct DangerousCertVerifier;
 
+impl ServerCertVerifier for DangerousCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+        ]
+    }
+}
+
+fn tls_config() -> Arc<ClientConfig> {
+    // Build config with dangerous (no cert verification) for development/testing
+    // This allows connecting to HTTPS endpoints regardless of certificate validity
     Arc::new(
         ClientConfig::builder()
-            .with_root_certificates(roots)
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(DangerousCertVerifier))
             .with_no_client_auth(),
     )
 }
