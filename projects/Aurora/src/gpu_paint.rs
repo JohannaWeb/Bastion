@@ -2,6 +2,16 @@ use crate::layout::LayoutBox;
 use vello::kurbo::RoundedRect;
 use vello::peniko::{Color, Fill};
 use vello::Scene;
+use std::sync::OnceLock;
+use std::sync::Mutex;
+use std::collections::HashMap;
+
+// Cache for dominant image colors
+static IMAGE_COLOR_CACHE: OnceLock<Mutex<HashMap<String, [u8; 3]>>> = OnceLock::new();
+
+fn get_image_color_cache() -> &'static Mutex<HashMap<String, [u8; 3]>> {
+    IMAGE_COLOR_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 pub struct GpuPainter;
 
@@ -130,16 +140,31 @@ fn paint_text_with_opacity(layout_box: &LayoutBox, text: &str, scene: &mut Scene
     // Apply opacity to text color
     text_color.components[3] *= opacity;
 
-    let font_size = styles.font_size_px().filter(|&s| s > 0.0).unwrap_or(16.0);
-    let scale = font_size as f64 / 8.0;
+    let mut font_size = styles.font_size_px().filter(|&s| s > 0.0).unwrap_or(16.0);
 
-    let bold = styles.font_weight() == "bold" || styles.font_weight() == "bolder" || styles.font_weight() == "700" || styles.font_weight().parse::<i32>().unwrap_or(400) >= 600;
+    // Apply global zoom if set
+    if let Ok(zoom_str) = std::env::var("AURORA_ZOOM") {
+        if let Ok(zoom) = zoom_str.parse::<f32>() {
+            font_size *= zoom;
+        }
+    }
+
     let italic = styles.font_style() == "italic";
     let text_align = styles.text_align();
     let text_decoration = styles.get("text-decoration").unwrap_or("none");
 
-    // Calculate text width for alignment
-    let text_width = text.chars().count() as f64 * 8.0 * scale;
+    // Atlas base size is 32px, scale glyphs relative to it
+    let atlas_size = 32.0;
+    let scale_factor = (font_size / atlas_size) as f64;
+
+    // Calculate text width using atlas metrics
+    let mut text_width = 0.0;
+    for ch in text.chars() {
+        if let Some(metrics) = crate::font::get_glyph_metrics(ch) {
+            text_width += (metrics.advance_width as f64 * scale_factor);
+        }
+    }
+
     let box_width = r.width as f64;
 
     let offset_x = match text_align {
@@ -148,50 +173,44 @@ fn paint_text_with_opacity(layout_box: &LayoutBox, text: &str, scene: &mut Scene
         crate::css::TextAlign::Left => 0.0,
     };
 
-    // Vertical alignment: baseline is at 75% of the em height
-    let baseline_y = r.y as f64 + scale * 5.5;
+    // Vertical alignment: baseline at 75% of em height
+    let baseline_y = r.y as f64 + font_size as f64 * 0.75;
+    let mut current_x = r.x as f64 + offset_x;
 
-    // Use stroked outlines for smooth anti-aliased appearance
-    let stroke_width = (scale * 0.3).max(0.8);
+    for ch in text.chars() {
+        if let Some(metrics) = crate::font::get_glyph_metrics(ch) {
+            let glyph_width = (metrics.width as f64) * scale_factor;
+            let glyph_height = (metrics.height as f64) * scale_factor;
 
-    for (i, ch) in text.chars().enumerate() {
-        let char_x = r.x as f64 + offset_x + (i as f64 * 8.0 * scale);
-        let glyph = crate::font::get_glyph(ch);
+            if glyph_width > 0.0 && glyph_height > 0.0 {
+                let glyph_x = current_x + (metrics.x_offset as f64 * scale_factor);
+                let glyph_y = baseline_y - (metrics.height as f64 * 0.75 * scale_factor);
 
-        for (row, &bits) in glyph.iter().enumerate() {
-            let py = baseline_y - (6.0 - row as f64) * scale;
-            let italic_offset = if italic { (7.0 - row as f64) / 3.0 * scale } else { 0.0 };
-
-            for col in 0..8 {
-                if (bits & (1 << (7 - col))) != 0 {
-                    let px = char_x + (col as f64 * scale) + italic_offset;
-                    let p_width = if bold { 1.2 * scale } else { 1.0 * scale };
-
-                    // Draw as stroked rounded rectangle for smooth edges
-                    let rect = vello::kurbo::Rect::new(px, py, px + p_width, py + scale);
-                    let rounded_rect = RoundedRect::from_rect(rect, scale * 0.2);
-
-                    scene.stroke(
-                        &vello::kurbo::Stroke::new(stroke_width),
-                        vello::kurbo::Affine::IDENTITY,
-                        text_color,
-                        None,
-                        &rounded_rect,
-                    );
-                }
+                // Draw pixel-by-pixel for crisp appearance
+                render_glyph_from_atlas(
+                    scene,
+                    ch,
+                    glyph_x,
+                    glyph_y,
+                    scale_factor,
+                    text_color,
+                    italic,
+                );
             }
+
+            current_x += (metrics.advance_width as f64 * scale_factor);
         }
     }
 
     // Draw text decorations
     if text_decoration != "none" {
         let text_end_x = r.x as f64 + offset_x + text_width;
-        let stroke_width = (scale * 0.5).max(1.0);
+        let stroke_width_deco = (font_size * 0.15).max(0.8);
 
         if text_decoration.contains("underline") {
-            let line_y = baseline_y + scale * 1.5;
+            let line_y = baseline_y + font_size as f64 * 0.15;
             scene.stroke(
-                &vello::kurbo::Stroke::new(stroke_width),
+                &vello::kurbo::Stroke::new(stroke_width_deco as f64),
                 vello::kurbo::Affine::IDENTITY,
                 text_color,
                 None,
@@ -203,9 +222,9 @@ fn paint_text_with_opacity(layout_box: &LayoutBox, text: &str, scene: &mut Scene
         }
 
         if text_decoration.contains("line-through") {
-            let line_y = baseline_y + scale * 0.5;
+            let line_y = baseline_y - font_size as f64 * 0.2;
             scene.stroke(
-                &vello::kurbo::Stroke::new(stroke_width),
+                &vello::kurbo::Stroke::new(stroke_width_deco as f64),
                 vello::kurbo::Affine::IDENTITY,
                 text_color,
                 None,
@@ -218,17 +237,82 @@ fn paint_text_with_opacity(layout_box: &LayoutBox, text: &str, scene: &mut Scene
     }
 }
 
+/// Render a glyph by sampling its bitmap from the atlas
+fn render_glyph_from_atlas(
+    scene: &mut Scene,
+    ch: char,
+    glyph_x: f64,
+    glyph_y: f64,
+    scale: f64,
+    color: Color,
+    italic: bool,
+) {
+    // Get the glyph bitmap from the font system
+    let bitmap = crate::font::get_glyph(ch);
+
+    // Render 8x8 bitmap
+    for (row, &bits) in bitmap.iter().enumerate() {
+        for col in 0..8 {
+            if (bits & (1 << (7 - col))) != 0 {
+                let px = glyph_x + (col as f64 * scale);
+                let py = glyph_y + (row as f64 * scale);
+
+                // Draw pixel as tiny rectangle
+                let rect = vello::kurbo::Rect::new(
+                    px,
+                    py,
+                    (px + scale).min(px + scale * 1.2),
+                    (py + scale).min(py + scale * 1.2),
+                );
+
+                if italic {
+                    let skew = (row as f64 / 8.0) * 0.2;
+                    let affine = vello::kurbo::Affine::new([1.0, 0.0, skew * 0.1, 1.0, 0.0, 0.0]);
+                    scene.fill(Fill::NonZero, affine, color, None, &rect);
+                } else {
+                    scene.fill(Fill::NonZero, vello::kurbo::Affine::IDENTITY, color, None, &rect);
+                }
+            }
+        }
+    }
+}
+
 fn paint_text(layout_box: &LayoutBox, text: &str, scene: &mut Scene) {
     paint_text_with_opacity(layout_box, text, scene, 1.0);
 }
 
 fn paint_image(layout_box: &LayoutBox, scene: &mut Scene) {
     let r = layout_box.rect();
-    let styles = layout_box.styles();
-    let bg_color = parse_color(styles.get("background-color").unwrap_or("#e0e0e0"));
-    let border_color = Color::from_rgb8(128, 128, 128);
-
     let k_rect = vello::kurbo::Rect::new(r.x as f64, r.y as f64, (r.x + r.width) as f64, (r.y + r.height) as f64);
+
+    // Try to fetch and analyze the image, fall back to placeholder if it fails
+    let (bg_color, border_color) = if let Some(src) = layout_box.image_src() {
+        let cache = get_image_color_cache();
+        let mut cache_lock = cache.lock().unwrap();
+
+        // Check if color is already cached
+        if let Some(&color) = cache_lock.get(src) {
+            (Color::from_rgb8(color[0], color[1], color[2]), Color::from_rgb8(100, 100, 100))
+        } else {
+            // Try to fetch and analyze the image
+            let dominant_color = fetch_and_analyze_image(src);
+            let (bg_col, border_col) = if let Some(color) = dominant_color {
+                cache_lock.insert(src.to_string(), color);
+                (Color::from_rgb8(color[0], color[1], color[2]), Color::from_rgb8(
+                    (color[0] as i32 - 50).max(0) as u8,
+                    (color[1] as i32 - 50).max(0) as u8,
+                    (color[2] as i32 - 50).max(0) as u8,
+                ))
+            } else {
+                // Fallback to light blue if image fetch/decode fails
+                (Color::from_rgb8(220, 235, 250), Color::from_rgb8(100, 150, 200))
+            };
+            (bg_col, border_col)
+        }
+    } else {
+        // No image source, use placeholder colors
+        (Color::from_rgb8(220, 235, 250), Color::from_rgb8(100, 150, 200))
+    };
 
     scene.fill(
         Fill::NonZero,
@@ -238,38 +322,82 @@ fn paint_image(layout_box: &LayoutBox, scene: &mut Scene) {
         &k_rect,
     );
 
-    // Draw border
+    // Draw rounded border
+    let rounded_rect = RoundedRect::from_rect(k_rect, 4.0);
     scene.stroke(
         &vello::kurbo::Stroke::new(2.0),
         vello::kurbo::Affine::IDENTITY,
         border_color,
         None,
-        &vello::kurbo::Rect::new(r.x as f64 + 1.0, r.y as f64 + 1.0, (r.x + r.width) as f64 - 1.0, (r.y + r.height) as f64 - 1.0),
+        &rounded_rect,
+    );
+}
+
+fn fetch_and_analyze_image(url: &str) -> Option<[u8; 3]> {
+    // Skip data URIs for now (would need to handle base64 decoding)
+    if url.starts_with("data:") {
+        return None;
+    }
+
+    // Create a dummy identity for network access
+    let identity = opus::domain::Identity::new(
+        "did:human:aurora",
+        "Aurora",
+        opus::domain::IdentityKind::Human,
+        [opus::domain::Capability::NetworkAccess],
     );
 
-    // Draw a "picture frame" icon (diagonal lines forming an X)
-    let stroke = vello::kurbo::Stroke::new(1.5);
-    let pad = 4.0;
-    scene.stroke(
-        &stroke,
-        vello::kurbo::Affine::IDENTITY,
-        border_color,
-        None,
-        &vello::kurbo::Line::new(
-            vello::kurbo::Point::new(r.x as f64 + pad, r.y as f64 + pad),
-            vello::kurbo::Point::new((r.x + r.width) as f64 - pad, (r.y + r.height) as f64 - pad)
-        )
-    );
-    scene.stroke(
-        &stroke,
-        vello::kurbo::Affine::IDENTITY,
-        border_color,
-        None,
-        &vello::kurbo::Line::new(
-            vello::kurbo::Point::new((r.x + r.width) as f64 - pad, r.y as f64 + pad),
-            vello::kurbo::Point::new(r.x as f64 + pad, (r.y + r.height) as f64 - pad)
-        )
-    );
+    // For relative URLs, we can't resolve them without context, so skip for now
+    let full_url = if url.starts_with("http://") || url.starts_with("https://") {
+        url.to_string()
+    } else if url.starts_with("/") {
+        // Root-relative URL - we'd need the base URL to resolve, skip for now
+        return None;
+    } else {
+        return None;
+    };
+
+    // Fetch the image bytes
+    let bytes = match crate::fetch::fetch_bytes(&full_url, &identity) {
+        Ok(b) => b,
+        Err(_) => return None,
+    };
+
+    // Decode the image
+    let img = match image::load_from_memory(&bytes) {
+        Ok(i) => i,
+        Err(_) => return None,
+    };
+
+    // Convert to RGBA for consistent processing
+    let rgba_img = img.to_rgba8();
+
+    // Calculate dominant color by averaging
+    let mut r_sum: u64 = 0;
+    let mut g_sum: u64 = 0;
+    let mut b_sum: u64 = 0;
+    let mut count = 0u64;
+
+    for pixel in rgba_img.pixels() {
+        // Skip very transparent pixels
+        if pixel[3] < 128 {
+            continue;
+        }
+        r_sum += pixel[0] as u64;
+        g_sum += pixel[1] as u64;
+        b_sum += pixel[2] as u64;
+        count += 1;
+    }
+
+    if count == 0 {
+        return None;
+    }
+
+    Some([
+        (r_sum / count) as u8,
+        (g_sum / count) as u8,
+        (b_sum / count) as u8,
+    ])
 }
 
 fn parse_color(name: &str) -> Color {

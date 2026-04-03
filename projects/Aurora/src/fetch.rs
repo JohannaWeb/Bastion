@@ -1,7 +1,8 @@
 use rustls::pki_types::ServerName;
-use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
+use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::pki_types::{CertificateDer, UnixTime};
+use rustls::pki_types::CertificateDer;
+use webpki_roots::TLS_SERVER_ROOTS;
 use std::fmt::{self, Display, Formatter};
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -149,7 +150,7 @@ pub fn fetch_string(url: &str, identity: &Identity) -> Result<String, FetchError
     if let Some(path) = url.strip_prefix("file://") {
         return std::fs::read_to_string(path).map_err(FetchError::Io);
     }
-    
+
     if !identity.default_capabilities.contains(&Capability::NetworkAccess) {
         return Err(FetchError::InvalidUrl(format!(
             "Identity {} lacks network.access capability",
@@ -157,6 +158,20 @@ pub fn fetch_string(url: &str, identity: &Identity) -> Result<String, FetchError
         )));
     }
     fetch_with_redirects(url, MAX_REDIRECTS)
+}
+
+pub fn fetch_bytes(url: &str, identity: &Identity) -> Result<Vec<u8>, FetchError> {
+    if let Some(path) = url.strip_prefix("file://") {
+        return std::fs::read(path).map_err(FetchError::Io);
+    }
+
+    if !identity.default_capabilities.contains(&Capability::NetworkAccess) {
+        return Err(FetchError::InvalidUrl(format!(
+            "Identity {} lacks network.access capability",
+            identity.did
+        )));
+    }
+    fetch_bytes_with_redirects(url, MAX_REDIRECTS)
 }
 
 fn fetch_with_redirects(url: &str, remaining_redirects: usize) -> Result<String, FetchError> {
@@ -193,6 +208,42 @@ fn fetch_with_redirects(url: &str, remaining_redirects: usize) -> Result<String,
     }
 
     Ok(String::from_utf8_lossy(&body).to_string())
+}
+
+fn fetch_bytes_with_redirects(url: &str, remaining_redirects: usize) -> Result<Vec<u8>, FetchError> {
+    let parsed = ParsedUrl::parse(url)?;
+    let response = send_request(&parsed)?;
+
+    if is_redirect(response.status_code) {
+        if remaining_redirects == 0 {
+            return Err(FetchError::InvalidResponse("too many redirects".to_string()));
+        }
+        let location = header_value(&response.headers, "location")
+            .ok_or_else(|| FetchError::InvalidResponse("missing location header".to_string()))?;
+        let next_url = resolve_relative_url(url, location)?;
+        return fetch_bytes_with_redirects(&next_url, remaining_redirects - 1);
+    }
+
+    if response.status_code != 200 {
+        return Err(FetchError::InvalidResponse(format!(
+            "HTTP {}",
+            response.status_code
+        )));
+    }
+
+    // Handle compression
+    let mut body = response.body;
+    if let Some(encoding) = header_value(&response.headers, "content-encoding") {
+        if encoding.eq_ignore_ascii_case("gzip") {
+            let mut decoder = GzDecoder::new(&body[..]);
+            let mut decoded = Vec::new();
+            if decoder.read_to_end(&mut decoded).is_ok() {
+                body = decoded;
+            }
+        }
+    }
+
+    Ok(body)
 }
 
 pub fn resolve_relative_url(base: &str, relative: &str) -> Result<String, FetchError> {
@@ -276,19 +327,20 @@ fn read_response_bytes<R: Read>(reader: &mut R) -> Result<HttpResponse, FetchErr
     HttpResponse::parse(&response)
 }
 
-/// Custom certificate verifier that accepts all certificates (for development)
+/// Development certificate verifier that accepts all certificates
 #[derive(Debug)]
-struct DangerousCertVerifier;
+struct AcceptAllVerifier;
 
-impl ServerCertVerifier for DangerousCertVerifier {
+impl ServerCertVerifier for AcceptAllVerifier {
     fn verify_server_cert(
         &self,
         _end_entity: &CertificateDer<'_>,
         _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName,
+        _server_name: &rustls::pki_types::ServerName,
         _ocsp_response: &[u8],
-        _now: UnixTime,
+        _now: rustls::pki_types::UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
+        // Accept all certificates for development/testing
         Ok(ServerCertVerified::assertion())
     }
 
@@ -313,17 +365,19 @@ impl ServerCertVerifier for DangerousCertVerifier {
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
         vec![
             rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
         ]
     }
 }
 
 fn tls_config() -> Arc<ClientConfig> {
-    // Build config with dangerous (no cert verification) for development/testing
-    // This allows connecting to HTTPS endpoints regardless of certificate validity
+    // For development: accept all certificates
     Arc::new(
         ClientConfig::builder()
             .dangerous()
-            .with_custom_certificate_verifier(Arc::new(DangerousCertVerifier))
+            .with_custom_certificate_verifier(Arc::new(AcceptAllVerifier))
             .with_no_client_auth(),
     )
 }
