@@ -28,7 +28,7 @@ impl Stylesheet {
              h2 { font-size: 24px; font-weight: bold; color: ink; } \
              h3 { font-size: 18px; font-weight: bold; color: ink; } \
              li { display: block; margin: 4px 0; } \
-             div, section, article { display: block; border-radius: 6px; } \
+             div, section, article { display: block; } \
              head, style, script, link, meta, title, noscript, template { display: none; }"
         )
     }
@@ -37,7 +37,10 @@ impl Stylesheet {
         let mut rules = Vec::new();
         let mut variables = BTreeMap::new();
 
-        for (source_order, chunk) in source.split('}').enumerate() {
+        // Strip @media, @keyframes, @font-face, etc. before splitting on '}'
+        let stripped = strip_at_rules(source);
+
+        for (source_order, chunk) in stripped.split('}').enumerate() {
             let chunk = chunk.trim();
             if chunk.is_empty() {
                 continue;
@@ -58,10 +61,11 @@ impl Stylesheet {
 
                     let (name, value) = declaration.split_once(':')?;
                     let name = name.trim().to_string();
-                    let value = value.trim().to_string();
+                    // Strip !important before storing
+                    let value = value.trim().trim_end_matches("!important").trim().to_string();
 
-                    // Collect CSS custom properties (--name)
-                    if name.starts_with("--") && (selector_part == ":root" || selector_part == "*") {
+                    // Collect CSS custom properties from :root, *, and html selectors
+                    if name.starts_with("--") && matches!(selector_part, ":root" | "*" | "html") {
                         variables.insert(name.clone(), value.clone());
                     }
 
@@ -247,7 +251,7 @@ pub struct Selector {
 pub struct SimpleSelector {
     pub tag_name: Option<String>,
     pub id: Option<String>,
-    pub class_name: Option<String>,
+    pub class_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -682,9 +686,15 @@ impl Selector {
 
 impl SimpleSelector {
     fn parse(source: &str) -> Option<Self> {
+        // Strip pseudo-selectors (:hover, ::before) and attribute selectors ([type="text"])
+        // instead of rejecting the whole rule — we just ignore those qualifiers
+        let source = strip_pseudo_suffix(source);
+        // Universal selector
+        let source = source.trim_start_matches('*');
+
         let mut tag_name = String::new();
         let mut id = None;
-        let mut class_name = None;
+        let mut class_names = Vec::new();
         let chars = source.chars().collect::<Vec<_>>();
         let mut index = 0;
 
@@ -707,10 +717,10 @@ impl SimpleSelector {
                     while index < chars.len() && is_identifier_char(chars[index]) {
                         index += 1;
                     }
-                    if start == index || class_name.is_some() {
+                    if start == index {
                         return None;
                     }
-                    class_name = Some(chars[start..index].iter().collect());
+                    class_names.push(chars[start..index].iter().collect());
                 }
                 ch if is_identifier_char(ch) => {
                     if !tag_name.is_empty() {
@@ -726,18 +736,14 @@ impl SimpleSelector {
             }
         }
 
-        if tag_name.is_empty() && id.is_none() && class_name.is_none() {
+        if tag_name.is_empty() && id.is_none() && class_names.is_empty() {
             return None;
         }
 
         Some(Self {
-            tag_name: if tag_name.is_empty() {
-                None
-            } else {
-                Some(tag_name)
-            },
+            tag_name: if tag_name.is_empty() { None } else { Some(tag_name) },
             id,
-            class_name,
+            class_names,
         })
     }
 
@@ -754,12 +760,10 @@ impl SimpleSelector {
             }
         }
 
-        if let Some(class_name) = &self.class_name {
-            let Some(classes) = element.attributes.get("class") else {
-                return false;
-            };
-
-            if !classes.split_whitespace().any(|c| c == class_name) {
+        if !self.class_names.is_empty() {
+            let classes = element.attributes.get("class").map(|s| s.as_str()).unwrap_or("");
+            let element_classes: Vec<&str> = classes.split_whitespace().collect();
+            if !self.class_names.iter().all(|cn| element_classes.contains(&cn.as_str())) {
                 return false;
             }
         }
@@ -770,7 +774,7 @@ impl SimpleSelector {
     fn specificity(&self) -> (u8, u8, u8) {
         (
             u8::from(self.id.is_some()),
-            u8::from(self.class_name.is_some()),
+            self.class_names.len() as u8,
             u8::from(self.tag_name.is_some()),
         )
     }
@@ -818,8 +822,8 @@ impl Display for SimpleSelector {
         if let Some(id) = &self.id {
             write!(f, "#{id}")?;
         }
-        if let Some(class_name) = &self.class_name {
-            write!(f, ".{class_name}")?;
+        for cn in &self.class_names {
+            write!(f, ".{cn}")?;
         }
         Ok(())
     }
@@ -842,6 +846,67 @@ impl Display for StyleMap {
 
 fn is_identifier_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'
+}
+
+/// Strip pseudo-selectors (`:hover`, `::before`) and attribute selectors (`[type="text"]`)
+/// from a simple selector string. Instead of rejecting rules that use these, we accept
+/// the base selector and ignore the qualifiers.
+fn strip_pseudo_suffix(s: &str) -> &str {
+    let mut paren_depth: i32 = 0;
+    let mut byte_pos = 0;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '(' => paren_depth += 1,
+            ')' => paren_depth -= 1,
+            ':' | '[' if paren_depth == 0 => return &s[..i],
+            _ => {}
+        }
+        byte_pos = i + ch.len_utf8();
+    }
+    &s[..byte_pos]
+}
+
+/// Remove @-rule blocks (@media, @keyframes, @font-face, etc.) from CSS source.
+/// These contain nested braces that break the simple `split('}')` parser.
+fn strip_at_rules(source: &str) -> String {
+    let mut result = String::with_capacity(source.len());
+    let mut chars = source.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '@' {
+            // Consume the at-keyword and optional whitespace
+            let mut found_brace = false;
+            for c in chars.by_ref() {
+                if c == '{' {
+                    found_brace = true;
+                    break;
+                } else if c == ';' {
+                    // Simple at-rule (e.g. @import, @charset) — no block, just skip
+                    break;
+                }
+            }
+            if found_brace {
+                // Skip the entire block, tracking nested braces
+                let mut depth = 1usize;
+                for c in chars.by_ref() {
+                    match c {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+
+    result
 }
 
 fn parse_margin_shorthand(value: Option<&str>) -> Margin {

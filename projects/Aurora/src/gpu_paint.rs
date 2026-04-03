@@ -74,11 +74,11 @@ fn paint_element_with_opacity(layout_box: &LayoutBox, scene: &mut Scene, opacity
     bg_color.components[3] *= opacity;
     border_color.components[3] *= opacity;
 
-    // Determine border radius
+    // Determine border radius (default 0 — only round if explicitly styled)
     let radius = if let Some(radius_str) = styles.get("border-radius") {
-        radius_str.trim_end_matches("px").parse::<f32>().unwrap_or(6.0) as f64
+        radius_str.trim_end_matches("px").parse::<f32>().unwrap_or(0.0) as f64
     } else {
-        6.0
+        0.0
     };
 
     let k_rect = vello::kurbo::Rect::new(r.x as f64, r.y as f64, (r.x + r.width) as f64, (r.y + r.height) as f64);
