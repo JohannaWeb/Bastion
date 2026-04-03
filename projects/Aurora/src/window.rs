@@ -122,7 +122,7 @@ fn render_layout_with_text(
                 (rect.x as i32 + offset_x) as i32,
                 (rect.y as i32 + offset_y) as i32,
                 color,
-                (font_size * 0.75).max(4.0) as u32,  // Scale to 75% for better fit on screenshot
+                (font_size * 1.5).max(4.0) as u32,  // Scale to 150% for readability
             );
         }
 
@@ -176,9 +176,9 @@ fn render_text_simple(
 ) {
     let (width, height) = img.dimensions();
 
-    // Use font size directly for better readability (not scaled down)
-    let char_width = font_size.max(4) as i32;
-    let char_height = (font_size * 2) as i32;  // Height is typically 1.5-2x width
+    // Use font size directly for better readability
+    let char_width = (font_size as i32).max(6);
+    let char_height = ((font_size as i32 * 3) / 2).max(8);  // 1.5x width
 
     let mut cx = x;
     let mut cy = y;
