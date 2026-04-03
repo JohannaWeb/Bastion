@@ -18,8 +18,20 @@ Current experimental slice:
 - match tag, `.class`, `#id`, and descendant rules into computed styles
 - build a style tree with basic color inheritance
 - derive a block-oriented layout tree
-- paint the result into a tiny text framebuffer
-- print both structures from a CLI binary
+- shape text via **rustybuzz** (HarfBuzz port)
+- paint the result via **Vello** (WGPU-accelerated vector graphics)
+- interactive window with scrolling support
+
+## The Render Loop
+
+Aurora's rendering pipeline is built on a modern, GPU-native stack:
+
+1.  **Event Loop**: `winit` manages the window and user input (scrolling, resizing).
+2.  **Scene Construction**: On every frame, a new `vello::Scene` is initialized.
+3.  **Painting**: `GpuPainter` traverses the **Layout Tree**, emitting vector commands (rects, text runs) into the scene.
+4.  **Text Shaping**: `rustybuzz` converts UTF-8 strings into positioned glyphs, which are then sampled from a pre-baked **Glyph Atlas** texture.
+5.  **Rasterization**: The `vello::Renderer` compiles the scene and executes compute shaders on the GPU via `wgpu` to produce the final pixels.
+6.  **Presentation**: The resulting texture is blitted to the window's surface for display.
 
 ## Run
 
@@ -33,9 +45,28 @@ To fetch a page over the network:
 cargo run -- http://example.com/
 ```
 
+To render the bundled static Google homepage fixture:
+
+```bash
+cargo run -- --fixture google-homepage
+```
+
+To save a screenshot from the fixture:
+
+```bash
+AURORA_SCREENSHOT=/tmp/google-homepage.png cargo run -- --fixture google-homepage
+```
+
+Optional debug dumps:
+
+```bash
+cargo run -- --fixture google-homepage --debug-dom --debug-style --debug-layout
+```
+
 Current fetch support is intentionally small:
 
 - `http://` and `https://`
+- `file://`
 - basic redirects
 - remote images render as placeholders using `<img>` layout and alt text
 
@@ -50,4 +81,5 @@ cargo test
 1. Add a real tokenizer state machine.
 2. Add more inherited properties and better CSS value handling.
 3. Improve layout with inline flow, wrapping, and margins.
-4. Replace the text framebuffer with a real raster or window backend.
+4. Support dynamic glyph atlas growth and multi-font chains.
+5. Integrate native **AT Protocol** identity resolution.

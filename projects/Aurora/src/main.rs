@@ -17,8 +17,8 @@ use crate::css::Stylesheet;
 use crate::fetch::fetch_html;
 use crate::html::Parser;
 use crate::layout::LayoutTree;
-use crate::paint::Painter;
 use crate::style::StyleTree;
+use std::path::PathBuf;
 use std::rc::Rc;
 use opus::domain::{Capability, Identity};
 use std::env;
@@ -37,8 +37,10 @@ fn main() {
         [Capability::NetworkAccess, Capability::ReadWorkspace],
     );
 
-    let html = match env::args().nth(1) {
-        Some(url) => match fetch_html(&url, &identity) {
+    let cli = CliOptions::from_env();
+
+    let html = match cli.input_url.as_deref() {
+        Some(url) => match fetch_html(url, &identity) {
             Ok(html) => html,
             Err(error) => {
                 eprintln!("Failed to fetch {url}: {error}");
@@ -48,13 +50,23 @@ fn main() {
         None => demo_html().to_string(),
     };
 
-    let url_arg = env::args().nth(1);
+    let url_arg = cli.input_url.clone();
     let viewport_width = 1200.0;
     let dom = Parser::new(&html).parse_document();
     let mut stylesheet = Stylesheet::from_dom(&dom, url_arg.as_deref(), &identity);
     stylesheet.merge(Stylesheet::user_agent_stylesheet());
     let style_tree = StyleTree::from_dom(&dom, &stylesheet);
     let layout = LayoutTree::from_style_tree_with_viewport_width(&style_tree, viewport_width);
+
+    if cli.debug_dom {
+        println!("{}", dom.borrow());
+    }
+    if cli.debug_style {
+        println!("{style_tree}");
+    }
+    if cli.debug_layout {
+        println!("{layout}");
+    }
 
     // Boa JS Integration
     let scripts = extract_scripts(&dom);
@@ -94,20 +106,87 @@ fn main() {
     }
 
     // Open GPU window for rendering
-    println!("{layout}");
-
     // Initialize font atlas early
     let _ = crate::font::get_glyph_metrics('A');
 
     // Check if we need to render output (screenshot or interactive window)
     let has_screenshot = env::var("AURORA_SCREENSHOT").is_ok();
     let is_headless = env::var("AURORA_HEADLESS").is_ok();
+    let has_display = env::var("DISPLAY").is_ok() || env::var("WAYLAND_DISPLAY").is_ok();
 
-    if has_screenshot || !is_headless {
-        window::open(&layout);
+    if has_screenshot || (!is_headless && has_display) {
+        if let Err(error) = window::open(&layout) {
+            eprintln!("Window disabled: {error}");
+            eprintln!("Set AURORA_SCREENSHOT=/path/output.png for file output or AURORA_HEADLESS=1 to skip window creation.");
+        }
+    } else if !is_headless && !has_display {
+        eprintln!("No display server detected; skipping window creation.");
+        eprintln!("Set AURORA_SCREENSHOT=/path/output.png for file output.");
     } else {
         eprintln!("Headless mode: skipping window");
     }
+}
+
+#[derive(Debug, Clone)]
+struct CliOptions {
+    input_url: Option<String>,
+    debug_dom: bool,
+    debug_style: bool,
+    debug_layout: bool,
+}
+
+impl CliOptions {
+    fn from_env() -> Self {
+        let mut args = env::args().skip(1);
+        let mut input_url = None;
+        let mut debug_dom = env_flag("AURORA_DEBUG_DOM");
+        let mut debug_style = env_flag("AURORA_DEBUG_STYLE");
+        let mut debug_layout = env_flag("AURORA_DEBUG_LAYOUT");
+
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--fixture" => {
+                    let Some(name) = args.next() else {
+                        eprintln!("Missing fixture name after --fixture");
+                        std::process::exit(2);
+                    };
+                    input_url = Some(fixture_url(&name));
+                }
+                "--debug-dom" => debug_dom = true,
+                "--debug-style" => debug_style = true,
+                "--debug-layout" => debug_layout = true,
+                other if other.starts_with("--") => {
+                    eprintln!("Unknown flag: {other}");
+                    std::process::exit(2);
+                }
+                other => {
+                    input_url = Some(other.to_string());
+                }
+            }
+        }
+
+        Self {
+            input_url,
+            debug_dom,
+            debug_style,
+            debug_layout,
+        }
+    }
+}
+
+fn env_flag(name: &str) -> bool {
+    matches!(
+        env::var(name).as_deref(),
+        Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes") | Ok("YES")
+    )
+}
+
+fn fixture_url(name: &str) -> String {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("fixtures");
+    path.push(name);
+    path.push("index.html");
+    format!("file://{}", path.display())
 }
 
 fn demo_html() -> &'static str {

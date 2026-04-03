@@ -15,18 +15,20 @@ use winit::{
     window::Window,
 };
 
-pub fn open(layout: &LayoutTree) {
+pub fn open(layout: &LayoutTree) -> Result<(), String> {
     // Check if we should render to file instead of window
     let screenshot_path = std::env::var("AURORA_SCREENSHOT");
     if let Ok(path) = screenshot_path {
         render_to_file(layout, &path);
-        return;
+        return Ok(());
     }
 
-    let event_loop = EventLoop::new().expect("failed to create event loop");
+    let event_loop = EventLoop::new().map_err(|error| format!("failed to create event loop: {error}"))?;
     let mut app = AuroraApp::new(layout);
 
-    event_loop.run_app(&mut app).expect("failed to run event loop");
+    event_loop
+        .run_app(&mut app)
+        .map_err(|error| format!("failed to run event loop: {error}"))
 }
 
 fn render_to_file(layout: &LayoutTree, path: &str) {
@@ -70,10 +72,10 @@ fn render_layout_with_text(
         offset_y: i32,
     ) {
         let rect = box_node.rect();
+        let styles = box_node.styles();
 
-        // Draw background for containers
-        if !box_node.children().is_empty() && box_node.text().is_none() && !box_node.is_image() {
-            let styles = box_node.styles();
+        // Draw background for non-text boxes
+        if box_node.text().is_none() && !box_node.is_image() {
             let bg_color_str = styles.get("background-color").or_else(|| styles.get("background")).unwrap_or("transparent");
 
             if bg_color_str != "transparent" {
@@ -84,6 +86,18 @@ fn render_layout_with_text(
                     rect.width as u32,
                     rect.height as u32,
                     color
+                );
+            }
+
+            let border = styles.border_width();
+            if border.top > 0.0 || border.right > 0.0 || border.bottom > 0.0 || border.left > 0.0 {
+                let border_color = parse_screenshot_color(styles.get("border-color").unwrap_or("#dadce0"));
+                draw_border(img,
+                    (rect.x as i32 + offset_x) as u32,
+                    (rect.y as i32 + offset_y) as u32,
+                    rect.width as u32,
+                    rect.height as u32,
+                    border_color
                 );
             }
         }
@@ -111,7 +125,6 @@ fn render_layout_with_text(
 
         // Render text
         if let Some(text) = box_node.text() {
-            let styles = box_node.styles();
             let color_str = styles.get("color").unwrap_or("black");
             let color = parse_screenshot_color(color_str);
             let font_size = styles.font_size_px().filter(|&s| s > 0.0).unwrap_or(16.0);
@@ -122,7 +135,7 @@ fn render_layout_with_text(
                 (rect.x as i32 + offset_x) as i32,
                 (rect.y as i32 + offset_y) as i32,
                 color,
-                (font_size * 1.5).max(4.0) as u32,  // Scale to 150% for readability
+                font_size.max(4.0) as u32,
             );
         }
 
@@ -174,39 +187,80 @@ fn render_text_simple(
     color: image::Rgba<u8>,
     font_size: u32,
 ) {
-    let (width, height) = img.dimensions();
+    let font_size = font_size as f32;
+    let text_run = crate::font::layout_text_run(text, font_size);
+    let baseline_y = y as f32 + font_size * 0.75;
 
-    // Use font size directly for better readability
-    let char_width = (font_size as i32).max(6);
-    let char_height = ((font_size as i32 * 3) / 2).max(8);  // 1.5x width
-
-    let mut cx = x;
-    let mut cy = y;
-
-    for ch in text.chars() {
+    for glyph in &text_run.glyphs {
+        let ch = glyph.ch;
         if ch == '\n' {
-            cx = x;
-            cy += char_height;
             continue;
         }
 
-        if cx + char_width > width as i32 {
-            cx = x;
-            cy += char_height;
-        }
+        draw_glyph_bitmap(
+            img,
+            ch,
+            x as f32 + glyph.x,
+            baseline_y + glyph.y_offset,
+            font_size / 32.0,
+            color,
+        );
+    }
+}
 
-        // Draw character as a filled rectangle
-        for dy in 0..char_height {
-            for dx in 0..char_width {
-                let px = cx + dx;
-                let py = cy + dy;
-                if px >= 0 && py >= 0 && (px as u32) < width && (py as u32) < height {
-                    img.put_pixel(px as u32, py as u32, color);
-                }
+fn draw_glyph_bitmap(
+    img: &mut image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+    ch: char,
+    x: f32,
+    y: f32,
+    scale: f32,
+    color: image::Rgba<u8>,
+) {
+    let (width, height) = img.dimensions();
+    let Some(metrics) = crate::font::get_glyph_metrics(ch) else {
+        return;
+    };
+    if metrics.width == 0 || metrics.height == 0 {
+        return;
+    }
+
+    let (atlas, atlas_width, _) = crate::font::get_atlas_texture();
+    let scale = scale.max(0.1);
+    let draw_origin_x = x + metrics.x_offset as f32 * scale;
+    let draw_origin_y = y + metrics.y_offset as f32 * scale;
+    let scaled_width = (metrics.width as f32 * scale).ceil().max(1.0) as i32;
+    let scaled_height = (metrics.height as f32 * scale).ceil().max(1.0) as i32;
+
+    for dy in 0..scaled_height {
+        for dx in 0..scaled_width {
+            let src_x = ((dx as f32) / scale).floor() as u32;
+            let src_y = ((dy as f32) / scale).floor() as u32;
+            if src_x >= metrics.width || src_y >= metrics.height {
+                continue;
             }
-        }
 
-        cx += char_width;
+            let atlas_x = metrics.x + src_x;
+            let atlas_y = metrics.y + src_y;
+            let atlas_idx = ((atlas_y * atlas_width + atlas_x) * 4 + 3) as usize;
+            let alpha = atlas.get(atlas_idx).copied().unwrap_or(0);
+            if alpha == 0 {
+                continue;
+            }
+
+            let draw_x = draw_origin_x.round() as i32 + dx;
+            let draw_y = draw_origin_y.round() as i32 + dy;
+            if draw_x < 0 || draw_y < 0 || (draw_x as u32) >= width || (draw_y as u32) >= height {
+                continue;
+            }
+
+            let dst = img.get_pixel_mut(draw_x as u32, draw_y as u32);
+            let coverage = alpha as f32 / 255.0;
+            let inv = 1.0 - coverage;
+            dst.0[0] = (color.0[0] as f32 * coverage + dst.0[0] as f32 * inv).round() as u8;
+            dst.0[1] = (color.0[1] as f32 * coverage + dst.0[1] as f32 * inv).round() as u8;
+            dst.0[2] = (color.0[2] as f32 * coverage + dst.0[2] as f32 * inv).round() as u8;
+            dst.0[3] = 255;
+        }
     }
 }
 

@@ -3,6 +3,7 @@ use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::CertificateDer;
 use webpki_roots::TLS_SERVER_ROOTS;
+use std::path::{Path, PathBuf};
 use std::fmt::{self, Display, Formatter};
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -247,6 +248,10 @@ fn fetch_bytes_with_redirects(url: &str, remaining_redirects: usize) -> Result<V
 }
 
 pub fn resolve_relative_url(base: &str, relative: &str) -> Result<String, FetchError> {
+    if let Some(base_path) = base.strip_prefix("file://") {
+        return resolve_relative_file_url(base_path, relative);
+    }
+
     if relative.starts_with("http://") || relative.starts_with("https://") {
         return Ok(relative.to_string());
     }
@@ -278,6 +283,51 @@ pub fn resolve_relative_url(base: &str, relative: &str) -> Result<String, FetchE
         base_dir,
         relative
     ))
+}
+
+fn resolve_relative_file_url(base_path: &str, relative: &str) -> Result<String, FetchError> {
+    if relative.starts_with("file://") {
+        return Ok(relative.to_string());
+    }
+
+    let base = Path::new(base_path);
+    let resolved = if relative.starts_with('/') {
+        PathBuf::from(relative)
+    } else {
+        let parent = if base.is_dir() {
+            base
+        } else {
+            base.parent().unwrap_or_else(|| Path::new("/"))
+        };
+        parent.join(relative)
+    };
+
+    let normalized = normalize_path(resolved);
+    let absolute = if normalized.is_absolute() {
+        normalized
+    } else {
+        std::env::current_dir()
+            .map_err(FetchError::Io)?
+            .join(normalized)
+    };
+
+    Ok(format!("file://{}", absolute.display()))
+}
+
+fn normalize_path(path: PathBuf) -> PathBuf {
+    use std::path::Component;
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn send_request(url: &ParsedUrl) -> Result<HttpResponse, FetchError> {
@@ -584,6 +634,16 @@ mod tests {
         assert_eq!(
             resolve_relative_url(base, "http://other.test/zoom").unwrap(),
             "http://other.test/zoom"
+        );
+    }
+
+    #[test]
+    fn resolves_relative_file_paths() {
+        let base = "file:///tmp/aurora/fixtures/google-homepage/index.html";
+
+        assert_eq!(
+            resolve_relative_url(base, "styles.css").unwrap(),
+            "file:///tmp/aurora/fixtures/google-homepage/styles.css"
         );
     }
 

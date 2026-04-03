@@ -425,6 +425,17 @@ impl StyleMap {
         }
     }
 
+    pub fn flex_wrap(&self) -> bool {
+        matches!(self.0.get("flex-wrap").map(String::as_str), Some("wrap"))
+    }
+
+    pub fn gap_px(&self) -> f32 {
+        self.get("column-gap")
+            .and_then(parse_length_px)
+            .or_else(|| self.get("gap").and_then(parse_length_px))
+            .unwrap_or(0.0)
+    }
+
     pub fn text_align(&self) -> TextAlign {
         match self.0.get("text-align").map(String::as_str) {
             Some("center") => TextAlign::Center,
@@ -508,6 +519,27 @@ impl StyleMap {
 
     pub fn font_size_px(&self) -> Option<f32> {
         self.get("font-size").and_then(parse_length_px)
+    }
+
+    /// Resolve width with support for %, rem, em, vw units.
+    pub fn width_resolved(&self, available_width: f32, font_size: f32, root_font_size: f32, viewport_width: f32) -> Option<f32> {
+        let raw = self.get("width")?;
+        if raw == "auto" { return None; }
+        parse_length_value(raw).map(|lv| lv.to_px(available_width, font_size, root_font_size, viewport_width, 0.0))
+    }
+
+    /// Resolve height with support for %, rem, em, vh units.
+    pub fn height_resolved(&self, available_height: f32, font_size: f32, root_font_size: f32, viewport_height: f32) -> Option<f32> {
+        let raw = self.get("height")?;
+        if raw == "auto" || raw.contains("calc(") { return None; }
+        parse_length_value(raw).map(|lv| lv.to_px(available_height, font_size, root_font_size, 0.0, viewport_height))
+    }
+
+    /// Resolve font-size with support for rem, em, % units.
+    /// parent_font_size is used for em/% resolution.
+    pub fn font_size_resolved(&self, parent_font_size: f32, root_font_size: f32) -> Option<f32> {
+        let raw = self.get("font-size")?;
+        parse_length_value(raw).map(|lv| lv.to_px(parent_font_size, parent_font_size, root_font_size, 0.0, 0.0))
     }
 
     pub fn font_weight(&self) -> &str {
@@ -1019,6 +1051,57 @@ fn parse_length_px(value: &str) -> Option<f32> {
     }
 
     value.strip_suffix("px")?.trim().parse::<f32>().ok()
+}
+
+/// A length value that may be in various CSS units.
+#[derive(Debug, Clone, Copy)]
+pub enum LengthValue {
+    Px(f32),
+    Percent(f32),
+    Rem(f32),
+    Em(f32),
+    Vh(f32),
+    Vw(f32),
+}
+
+impl LengthValue {
+    /// Resolve to pixels given context.
+    pub fn to_px(self, available: f32, font_size: f32, root_font_size: f32, viewport_width: f32, viewport_height: f32) -> f32 {
+        match self {
+            LengthValue::Px(v) => v,
+            LengthValue::Percent(v) => available * v / 100.0,
+            LengthValue::Rem(v) => root_font_size * v,
+            LengthValue::Em(v) => font_size * v,
+            LengthValue::Vw(v) => viewport_width * v / 100.0,
+            LengthValue::Vh(v) => viewport_height * v / 100.0,
+        }
+    }
+}
+
+pub fn parse_length_value(value: &str) -> Option<LengthValue> {
+    let value = value.trim();
+    if value == "0" {
+        return Some(LengthValue::Px(0.0));
+    }
+    if let Some(v) = value.strip_suffix("px") {
+        return v.trim().parse::<f32>().ok().map(LengthValue::Px);
+    }
+    if let Some(v) = value.strip_suffix('%') {
+        return v.trim().parse::<f32>().ok().map(LengthValue::Percent);
+    }
+    if let Some(v) = value.strip_suffix("rem") {
+        return v.trim().parse::<f32>().ok().map(LengthValue::Rem);
+    }
+    if let Some(v) = value.strip_suffix("em") {
+        return v.trim().parse::<f32>().ok().map(LengthValue::Em);
+    }
+    if let Some(v) = value.strip_suffix("vw") {
+        return v.trim().parse::<f32>().ok().map(LengthValue::Vw);
+    }
+    if let Some(v) = value.strip_suffix("vh") {
+        return v.trim().parse::<f32>().ok().map(LengthValue::Vh);
+    }
+    None
 }
 
 fn parse_border_width_shorthand(value: Option<&str>) -> EdgeSizes {

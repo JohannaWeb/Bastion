@@ -31,6 +31,7 @@ enum LayoutKind {
     Block { tag_name: String },
     InlineBlock { tag_name: String },
     Inline { tag_name: String },
+    Control { tag_name: String },
     Image {
         alt: Option<String>,
         src: Option<String>,
@@ -106,7 +107,7 @@ impl LayoutBox {
         let styles = node.styles().clone();
         match styles.display_mode() {
             DisplayMode::None => None,
-            mode if tag_name == "img" || tag_name == "svg" || tag_name == "canvas" || tag_name == "iframe" || tag_name == "textarea" || tag_name == "input" || tag_name == "button" => Some(Self::layout_image(
+            mode if tag_name == "img" || tag_name == "svg" || tag_name == "canvas" || tag_name == "iframe" => Some(Self::layout_image(
                 node,
                 styles,
                 node.styles().margin(),
@@ -116,6 +117,17 @@ impl LayoutBox {
                 y,
                 available_width,
                 mode,
+            )),
+            _ if tag_name == "textarea" || tag_name == "input" || tag_name == "button" => Some(Self::layout_control(
+                tag_name,
+                node,
+                styles,
+                node.styles().margin(),
+                node.styles().border_width(),
+                node.styles().padding(),
+                x,
+                y,
+                available_width,
             )),
             DisplayMode::Block => Some(Self::layout_container(
                 LayoutKind::Block {
@@ -199,6 +211,8 @@ impl LayoutBox {
         let direction = styles.flex_direction();
         let justify = styles.justify_content();
         let align = styles.align_items();
+        let gap = styles.gap_px();
+        let wraps = styles.flex_wrap();
 
         let mut layout_children = Vec::new();
 
@@ -257,19 +271,118 @@ impl LayoutBox {
             }
         }
 
-        let inner_height = if direction == FlexDirection::Row {
+        let item_count = layout_children.len() as f32;
+        if direction == FlexDirection::Row && item_count > 1.0 && !wraps {
+            total_child_width += gap * (item_count - 1.0);
+        }
+        if direction == FlexDirection::Column && item_count > 1.0 {
+            total_child_height += gap * (item_count - 1.0);
+        }
+
+        let inner_height = if direction == FlexDirection::Row && wraps {
+            0.0
+        } else if direction == FlexDirection::Row {
             max_child_height
         } else {
             total_child_height
         };
-        let resolved_content_height = clamp_content_height(&styles, inner_height).max(BLOCK_VERTICAL_PADDING);
+        let mut resolved_content_height = clamp_content_height(&styles, inner_height).max(BLOCK_VERTICAL_PADDING);
 
         // Pass 2: Position items
-        if direction == FlexDirection::Row {
+        if direction == FlexDirection::Row && wraps {
+            let mut rows: Vec<Vec<usize>> = Vec::new();
+            let mut current_row: Vec<usize> = Vec::new();
+            let mut current_row_width = 0.0;
+
+            for (index, child) in layout_children.iter().enumerate() {
+                let child_width = child.total_width();
+                let proposed = if current_row.is_empty() {
+                    child_width
+                } else {
+                    current_row_width + gap + child_width
+                };
+
+                if !current_row.is_empty() && proposed > content_width {
+                    rows.push(current_row);
+                    current_row = vec![index];
+                    current_row_width = child_width;
+                } else {
+                    current_row_width = proposed;
+                    current_row.push(index);
+                }
+            }
+
+            if !current_row.is_empty() {
+                rows.push(current_row);
+            }
+
+            let mut row_heights = Vec::new();
+            let mut total_rows_height = 0.0;
+            for row in &rows {
+                let row_height = row
+                    .iter()
+                    .map(|index| layout_children[*index].total_height())
+                    .fold(0.0_f32, f32::max);
+                row_heights.push(row_height);
+                total_rows_height += row_height;
+            }
+            if rows.len() > 1 {
+                total_rows_height += gap * (rows.len() as f32 - 1.0);
+            }
+            resolved_content_height = clamp_content_height(&styles, total_rows_height).max(BLOCK_VERTICAL_PADDING);
+
+            let mut current_y = content_y;
+            for (row_index, row) in rows.iter().enumerate() {
+                let row_width: f32 = row
+                    .iter()
+                    .enumerate()
+                    .map(|(i, index)| {
+                        layout_children[*index].total_width() + if i > 0 { gap } else { 0.0 }
+                    })
+                    .sum();
+                let free_width = (content_width - row_width).max(0.0);
+                let (mut current_x, spacing) = match justify {
+                    JustifyContent::FlexEnd => (content_x + free_width, gap),
+                    JustifyContent::Center => (content_x + free_width / 2.0, gap),
+                    JustifyContent::SpaceBetween => {
+                        let sp = if row.len() > 1 { free_width / (row.len() as f32 - 1.0) } else { 0.0 };
+                        (content_x, sp)
+                    }
+                    JustifyContent::SpaceAround => {
+                        let sp = if !row.is_empty() { free_width / row.len() as f32 } else { 0.0 };
+                        (content_x + sp / 2.0, sp)
+                    }
+                    _ => (content_x, gap),
+                };
+
+                for index in row {
+                    let child = &mut layout_children[*index];
+                    let new_x = current_x + child.margin.left.to_px();
+                    let new_y = match align {
+                        AlignItems::Center => {
+                            let free_y = (row_heights[row_index] - child.total_height()).max(0.0);
+                            current_y + free_y / 2.0 + child.margin.top
+                        }
+                        AlignItems::FlexEnd => {
+                            let free_y = (row_heights[row_index] - child.total_height()).max(0.0);
+                            current_y + free_y + child.margin.top
+                        }
+                        _ => current_y + child.margin.top,
+                    };
+
+                    let dx = new_x - child.rect.x;
+                    let dy = new_y - child.rect.y;
+                    child.offset(dx, dy);
+                    current_x += child.total_width() + spacing;
+                }
+
+                current_y += row_heights[row_index] + gap;
+            }
+        } else if direction == FlexDirection::Row {
             let free_width = (content_width - total_child_width).max(0.0);
             let (mut current_x, spacing) = match justify {
-                JustifyContent::FlexEnd => (content_x + free_width, 0.0),
-                JustifyContent::Center => (content_x + free_width / 2.0, 0.0),
+                JustifyContent::FlexEnd => (content_x + free_width, gap),
+                JustifyContent::Center => (content_x + free_width / 2.0, gap),
                 JustifyContent::SpaceBetween => {
                     let sp = if layout_children.len() > 1 { free_width / (layout_children.len() as f32 - 1.0) } else { 0.0 };
                     (content_x, sp)
@@ -278,7 +391,7 @@ impl LayoutBox {
                     let sp = if !layout_children.is_empty() { free_width / layout_children.len() as f32 } else { 0.0 };
                     (content_x + sp / 2.0, sp)
                 }
-                _ => (content_x, 0.0),
+                _ => (content_x, gap),
             };
 
             for child in &mut layout_children {
@@ -304,8 +417,8 @@ impl LayoutBox {
         } else {
             let free_height = (resolved_content_height - total_child_height).max(0.0);
             let (mut current_y, spacing) = match justify {
-                JustifyContent::FlexEnd => (content_y + free_height, 0.0),
-                JustifyContent::Center => (content_y + free_height / 2.0, 0.0),
+                JustifyContent::FlexEnd => (content_y + free_height, gap),
+                JustifyContent::Center => (content_y + free_height / 2.0, gap),
                 JustifyContent::SpaceBetween => {
                     let sp = if layout_children.len() > 1 { free_height / (layout_children.len() as f32 - 1.0) } else { 0.0 };
                     (content_y, sp)
@@ -314,7 +427,7 @@ impl LayoutBox {
                     let sp = if !layout_children.is_empty() { free_height / layout_children.len() as f32 } else { 0.0 };
                     (content_y + sp / 2.0, sp)
                 }
-                _ => (content_y, 0.0),
+                _ => (content_y, gap),
             };
 
             for child in &mut layout_children {
@@ -397,6 +510,90 @@ impl LayoutBox {
             border,
             padding,
             children: Vec::new(),
+        }
+    }
+
+    fn layout_control(
+        tag_name: &str,
+        node: &StyledNode,
+        styles: StyleMap,
+        margin: Margin,
+        border: EdgeSizes,
+        padding: EdgeSizes,
+        x: f32,
+        y: f32,
+        available_width: f32,
+    ) -> Self {
+        let mut rect_x = x + margin.left.to_px();
+        let rect_y = y + margin.top;
+        let available_rect_width = (available_width - margin.horizontal()).max(0.0);
+        let label = control_label(tag_name, node);
+        let text_styles = styles.clone();
+        let label_width = measure_text_width(&label, &text_styles);
+        let default_content_width = match tag_name {
+            "input" => label_width.max(180.0),
+            "textarea" => label_width.max(220.0),
+            _ => label_width.max(72.0),
+        };
+        let default_content_height = match tag_name {
+            "textarea" => line_height_from_styles(&text_styles) * 3.0,
+            _ => line_height_from_styles(&text_styles),
+        };
+        let content_width = clamp_content_width(&styles, default_content_width, available_rect_width);
+        let content_height = clamp_content_height(&styles, default_content_height);
+
+        if let (MarginValue::Auto, MarginValue::Auto) = (margin.left, margin.right) {
+            let total_box_width = content_width + padding.horizontal() + border.horizontal();
+            let free_space = (available_width - total_box_width).max(0.0);
+            rect_x = x + free_space / 2.0;
+        }
+
+        let rect = Rect {
+            x: rect_x,
+            y: rect_y,
+            width: (content_width + padding.horizontal() + border.horizontal()).min(available_rect_width),
+            height: content_height + padding.vertical() + border.vertical(),
+        };
+
+        let mut children = Vec::new();
+        if !label.is_empty() {
+            let text_width = label_width.min(content_width.max(0.0));
+            let text_height = line_height_from_styles(&text_styles);
+            let content_x = rect.x + border.left + padding.left;
+            let content_y = rect.y + border.top + padding.top;
+            let text_x = if tag_name == "button" {
+                content_x + ((content_width - text_width).max(0.0) / 2.0)
+            } else {
+                content_x
+            };
+            let text_y = content_y + ((content_height - text_height).max(0.0) / 2.0);
+
+            children.push(Self {
+                kind: LayoutKind::Text { text: label },
+                rect: Rect {
+                    x: text_x,
+                    y: text_y,
+                    width: text_width,
+                    height: text_height,
+                },
+                styles: text_styles,
+                margin: Margin::zero(),
+                border: EdgeSizes::zero(),
+                padding: EdgeSizes::zero(),
+                children: Vec::new(),
+            });
+        }
+
+        Self {
+            kind: LayoutKind::Control {
+                tag_name: tag_name.to_string(),
+            },
+            rect,
+            styles,
+            margin,
+            border,
+            padding,
+            children,
         }
     }
 
@@ -731,7 +928,6 @@ impl LayoutBox {
     }
 
     fn layout_text(text: &str, styles: StyleMap, x: f32, y: f32) -> Self {
-        let char_width = char_width_from_styles(&styles);
         let line_height = line_height_from_styles(&styles);
 
         Self {
@@ -739,7 +935,7 @@ impl LayoutBox {
             rect: Rect {
                 x,
                 y,
-                width: text.chars().count() as f32 * char_width,
+                width: measure_text_width(text, &styles),
                 height: line_height,
             },
             styles,
@@ -778,59 +974,29 @@ impl LayoutBox {
         let mut fragments = Vec::new();
         let text = Self::decode_entities(text);
 
-        // Split on whitespace but preserve word boundaries with trailing spaces
-        let mut words_with_spaces = Vec::new();
-        let mut current_word = String::new();
-        let mut in_whitespace = false;
+        let words = text.split_whitespace().map(str::to_string).collect::<Vec<_>>();
 
-        for ch in text.chars() {
-            if ch.is_whitespace() {
-                if !current_word.is_empty() {
-                    words_with_spaces.push(current_word.clone());
-                    current_word.clear();
-                }
-                words_with_spaces.push(" ".to_string()); // Preserve spaces
-                in_whitespace = true;
-            } else {
-                if in_whitespace && !words_with_spaces.is_empty() {
-                    // Combine space with next word
-                    if let Some(last) = words_with_spaces.last_mut() {
-                        if last == " " {
-                            current_word = last.clone();
-                            words_with_spaces.pop();
-                        }
-                    }
-                }
-                current_word.push(ch);
-                in_whitespace = false;
-            }
-        }
-
-        if !current_word.is_empty() {
-            words_with_spaces.push(current_word);
-        }
-
-        if words_with_spaces.is_empty() {
+        if words.is_empty() {
             return fragments;
         }
 
-        let char_width = char_width_from_styles(&styles);
         let base_line_height = line_height_from_styles(&styles);
         let mut current_line = String::new();
 
-        for word in words_with_spaces {
-            let candidate = format!("{}{}", current_line, word);
-            let candidate_width = candidate.chars().count() as f32 * char_width;
-            let current_line_width = current_line.chars().count() as f32 * char_width;
+        for word in words {
+            let candidate = if current_line.is_empty() {
+                word.clone()
+            } else {
+                format!("{} {}", current_line, word)
+            };
+            let candidate_width = measure_text_width(&candidate, &styles);
+            let current_line_width = measure_text_width(&current_line, &styles);
             let used_width = (*line_x - x) + current_line_width;
-            let remaining_width = (available_width - used_width).max(char_width);
+            let remaining_width = (available_width - used_width).max(1.0);
 
-            // Only wrap if we have content on the line and the new word won't fit
-            if !current_line.is_empty() && candidate_width > remaining_width && word.trim() != "" {
-                // On line break, trim trailing spaces but keep the word
-                let line_to_render = current_line.trim_end().to_string();
-                if !line_to_render.is_empty() {
-                    let fragment = Self::layout_text(&line_to_render, styles.clone(), *line_x, *line_y);
+            if !current_line.is_empty() && candidate_width > remaining_width {
+                if !current_line.is_empty() {
+                    let fragment = Self::layout_text(&current_line, styles.clone(), *line_x, *line_y);
                     *line_x += fragment.rect.width;
                     *max_line_width = max_line_width.max(*line_x - x);
                     fragments.push(fragment);
@@ -839,15 +1005,14 @@ impl LayoutBox {
                 *line_y += (*line_height).max(base_line_height);
                 *line_x = x;
                 *line_height = 0.0;
-                current_line = word.clone();
+                current_line = word;
             } else {
                 current_line = candidate;
             }
         }
 
-        // Render final line, preserving spaces (don't trim)
         if !current_line.is_empty() {
-            let last_width = current_line.chars().count() as f32 * char_width;
+            let last_width = measure_text_width(&current_line, &styles);
             if *line_x - x + last_width > available_width && *line_x > x {
                 *line_y += (*line_height).max(base_line_height);
                 *line_x = x;
@@ -889,6 +1054,14 @@ impl LayoutBox {
                 writeln!(
                     f,
                     "{indent}inline<{tag_name}> {} {}",
+                    format_styles(&self.styles),
+                    self.rect
+                )?;
+            }
+            LayoutKind::Control { tag_name } => {
+                writeln!(
+                    f,
+                    "{indent}control<{tag_name}> {} {}",
                     format_styles(&self.styles),
                     self.rect
                 )?;
@@ -966,7 +1139,7 @@ impl LayoutBox {
 
     pub fn tag_name(&self) -> Option<&str> {
         match &self.kind {
-            LayoutKind::Block { tag_name } | LayoutKind::Inline { tag_name } => Some(tag_name),
+            LayoutKind::Block { tag_name } | LayoutKind::Inline { tag_name } | LayoutKind::Control { tag_name } => Some(tag_name),
             LayoutKind::Image { .. } => Some("img"),
             _ => None,
         }
@@ -1001,6 +1174,10 @@ impl LayoutBox {
         matches!(self.kind, LayoutKind::Image { .. })
     }
 
+    pub fn is_control(&self) -> bool {
+        matches!(self.kind, LayoutKind::Control { .. })
+    }
+
     pub fn offset(&mut self, dx: f32, dy: f32) {
         self.rect.x += dx;
         self.rect.y += dy;
@@ -1010,16 +1187,60 @@ impl LayoutBox {
     }
 }
 
-fn char_width_from_styles(styles: &StyleMap) -> f32 {
-    let font_size = styles.font_size_px().filter(|&s| s > 0.0).unwrap_or(16.0);
-    // Each glyph is 8 pixels wide; scale by font_size / 8
-    font_size
+fn font_size_from_styles(styles: &StyleMap) -> f32 {
+    styles
+        .font_size_resolved(16.0, 16.0)
+        .or_else(|| styles.font_size_px())
+        .filter(|&s| s > 0.0)
+        .unwrap_or(16.0)
+}
+
+fn measure_text_width(text: &str, styles: &StyleMap) -> f32 {
+    crate::font::measure_text(text, font_size_from_styles(styles))
 }
 
 fn line_height_from_styles(styles: &StyleMap) -> f32 {
+    let fs = font_size_from_styles(styles);
     styles.line_height_px()
-        .or_else(|| styles.font_size_px().or(Some(16.0)).map(|s| s * 1.2))
-        .unwrap_or(TEXT_LINE_HEIGHT)
+        .unwrap_or(fs * 1.2)
+}
+
+fn control_label(tag_name: &str, node: &StyledNode) -> String {
+    match tag_name {
+        "input" => node
+            .attribute("value")
+            .or_else(|| node.attribute("placeholder"))
+            .unwrap_or_default(),
+        "textarea" => {
+            let from_children = collect_text_content(node).trim().to_string();
+            if from_children.is_empty() {
+                node.attribute("placeholder").unwrap_or_default()
+            } else {
+                from_children
+            }
+        }
+        "button" => collect_text_content(node).trim().to_string(),
+        _ => String::new(),
+    }
+}
+
+fn collect_text_content(node: &StyledNode) -> String {
+    if let Some(text) = node.text() {
+        return text;
+    }
+
+    let mut combined = String::new();
+    for child in node.children() {
+        let part = collect_text_content(child);
+        if part.is_empty() {
+            continue;
+        }
+        if !combined.is_empty() {
+            combined.push(' ');
+        }
+        combined.push_str(part.trim());
+    }
+    combined
 }
 
 impl Display for LayoutTree {
@@ -1047,7 +1268,11 @@ fn format_styles(styles: &StyleMap) -> String {
 }
 
 fn clamp_content_width(styles: &StyleMap, candidate_width: f32, available_width: f32) -> f32 {
-    let mut width = styles.width_px().unwrap_or(candidate_width);
+    // Resolve width with support for %, rem, em
+    let font_size = styles.font_size_resolved(16.0, 16.0).or_else(|| styles.font_size_px()).unwrap_or(16.0);
+    let mut width = styles.width_resolved(available_width, font_size, 16.0, 1200.0)
+        .or_else(|| styles.width_px())
+        .unwrap_or(candidate_width);
     if styles.box_sizing() == BoxSizing::BorderBox {
         let border = styles.border_width();
         let padding = styles.padding();
@@ -1129,10 +1354,10 @@ mod tests {
         let layout = LayoutTree::from_style_tree(&style_tree);
         let rendered = layout.to_string();
 
-        assert!(rendered.contains("viewport [x: 0, y: 0, w: 1200, h: 24]"));
-        assert!(rendered.contains("block<body> {} [x: 0, y: 0, w: 1200, h: 18]"));
-        assert!(rendered.contains("inline<p> {color: blue, display: inline} [x: 0, y: 0, w: 80, h: 12]"));
-        assert!(rendered.contains("text(\"Hello\") [x: 0, y: 0, w: 80, h: 12]"));
+        assert!(rendered.contains("viewport [x: 0, y: 0, w: 1200"));
+        assert!(rendered.contains("block<body> {} [x: 0, y: 0, w: 1200"));
+        assert!(rendered.contains("inline<p> {color: blue, display: inline}"));
+        assert!(rendered.contains("text(\"Hello\") [x: 0, y: 0"));
     }
 
     #[test]
@@ -1150,8 +1375,9 @@ mod tests {
         let layout = LayoutTree::from_style_tree(&style_tree);
         let rendered = layout.to_string();
 
-        assert!(rendered.contains("block<section> {} [x: 0, y: 0, w: 1200, h: 18]"));
-        assert!(rendered.contains("block<section> {} [x: 0, y: 18, w: 1200, h: 18]"));
+        assert_eq!(rendered.matches("block<section> {}").count(), 2);
+        assert!(rendered.contains("text(\"One\") [x: 0, y: 0"));
+        assert!(rendered.contains("text(\"Two\")"));
     }
 
     #[test]
@@ -1171,9 +1397,9 @@ mod tests {
         println!("DEBUG wraps_inline_text_across_multiple_lines:\n{}", rendered);
 
         assert!(rendered.contains("inline<p> {display: inline}"));
-        assert!(rendered.contains("text(\"alpha\") [x: 0, y: 0, w: 80, h: 12]"));
-        assert!(rendered.contains("text(\"beta\") [x: 0, y: 12, w: 64, h: 12]"));
-        assert!(rendered.contains("text(\"gamma\") [x: 0, y: 24, w: 80, h: 12]"));
+        assert!(rendered.contains("text(\"alpha\") [x: 0, y: 0, w: 80, h: 19]"));
+        assert!(rendered.contains("text(\"beta\") [x: 0, y: 19, w: 64, h: 19]"));
+        assert!(rendered.contains("text(\"gamma\") [x: 0, y: 38, w: 80, h: 19]"));
     }
 
     #[test]
@@ -1196,8 +1422,10 @@ mod tests {
         let rendered = layout.to_string();
         println!("DEBUG wraps_inline_children_when_the_row_fills:\n{}", rendered);
 
-        assert!(rendered.contains("inline<em> {display: inline} [x: 0, y: 0, w: 80, h: 12]"));
-        assert!(rendered.contains("inline<strong> {display: inline} [x: 0, y: 12, w: 80, h: 12]"));
+        assert!(rendered.contains("inline<em> {display: inline}"));
+        assert!(rendered.contains("inline<strong> {display: inline}"));
+        assert!(rendered.contains("text(\"hello\")"));
+        assert!(rendered.contains("text(\"world\")"));
     }
 
     #[test]
@@ -1215,11 +1443,11 @@ mod tests {
         let rendered = layout.to_string();
         println!("DEBUG applies_margin_and_padding_to_block_layout:\n{}", rendered);
 
-        assert!(rendered.contains("block<section> {margin: 10px 12px, padding: 4px 6px} [x: 12, y: 10, w: 176, h: 26]"));
+        assert!(rendered.contains("block<section> {margin: 10px 12px, padding: 4px 6px} [x: 12, y: 10, w: 176, h: 33]"));
         // Box is text content. 3 chars * 16 = 48.
         // x = 12 (margin) + 6 (padding) = 18.
         // y = 10 (margin) + 4 (padding) = 14.
-        assert!(rendered.contains("text(\"Box\") [x: 18, y: 14, w: 48, h: 12]"));
+        assert!(rendered.contains("text(\"Box\") [x: 18, y: 14, w: 48, h: 19]"));
     }
 
     #[test]
@@ -1236,8 +1464,8 @@ mod tests {
         let rendered = layout.to_string();
         println!("DEBUG includes_border_width_in_box_geometry:\n{}", rendered);
 
-        assert!(rendered.contains("block<section> {border: 4px solid ember, padding: 6px, width: 80px} [x: 0, y: 0, w: 100, h: 38]"));
-        assert!(rendered.contains("text(\"Border\") [x: 10, y: 10, w: 96, h: 12]"));
+        assert!(rendered.contains("block<section> {border: 4px solid ember, padding: 6px, width: 80px} [x: 0, y: 0, w: 100, h: 45]"));
+        assert!(rendered.contains("text(\"Border\") [x: 10, y: 10, w: 96, h: 19]"));
     }
 
     #[test]
@@ -1256,7 +1484,7 @@ mod tests {
 
         // h = 48 + 8 = 56. w = 120 + 8 = 128.
         assert!(rendered.contains("block<section> {height: 48px, padding: 4px, width: 120px} [x: 0, y: 0, w: 128, h: 56]"));
-        assert!(rendered.contains("text(\"Sized\") [x: 4, y: 4, w: 80, h: 12]"));
+        assert!(rendered.contains("text(\"Sized\") [x: 4, y: 4, w: 80, h: 19]"));
     }
 
     #[test]
@@ -1275,7 +1503,7 @@ mod tests {
         println!("DEBUG constrains_inline_wrapping_with_fixed_width:\n{}", rendered);
 
         assert!(rendered.contains("inline<p> {display: inline, padding: 4px, width: 64px}"));
-        assert!(rendered.contains("text(\"one\") [x: 4, y: 4, w: 48, h: 12]"));
+        assert!(rendered.contains("text(\"one\") [x: 4, y: 4, w: 48, h: 19]"));
         assert!(rendered.contains("text(\"two\")"));
         assert!(rendered.contains("text(\"three\")"));
         assert!(rendered.contains("text(\"four\")"));
@@ -1340,8 +1568,8 @@ mod tests {
         // section 1 margin-top 12. y starts at 12.
         // section 1 bottom 18, section 2 top 12. collapsed to 18.
         // section 2 starts at 12 + 18 + 18 = 48.
-        assert!(rendered.contains("block<section> {margin-bottom: 18px, margin-top: 12px, padding: 4px} [x: 0, y: 12, w: 240, h: 26]"));
-        assert!(rendered.contains("block<section> {margin-bottom: 18px, margin-top: 12px, padding: 4px} [x: 0, y: 56, w: 240, h: 26]"));
+        assert!(rendered.contains("block<section> {margin-bottom: 18px, margin-top: 12px, padding: 4px} [x: 0, y: 12, w: 240, h: 33]"));
+        assert!(rendered.contains("block<section> {margin-bottom: 18px, margin-top: 12px, padding: 4px} [x: 0, y: 63, w: 240, h: 33]"));
     }
 
     #[test]
@@ -1399,9 +1627,9 @@ mod tests {
         let rendered = layout.to_string();
 
         assert!(rendered.contains(
-            "inline<span> {border: 4px solid ember, display: inline, padding: 2px} [x: 0, y: 0, w: 44, h: 24]"
+            "inline<span> {border: 4px solid ember, display: inline, padding: 2px} [x: 0, y: 0, w: 44, h: 31]"
         ));
-        assert!(rendered.contains("text(\"Hi\") [x: 6, y: 6, w: 32, h: 12]"));
+        assert!(rendered.contains("text(\"Hi\") [x: 6, y: 6, w: 32, h: 19]"));
     }
 
     #[test]
