@@ -9,17 +9,256 @@ use vello::{
     Renderer, RendererOptions, Scene,
 };
 use winit::{
-    event::{ElementState, Event, KeyEvent, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event::{ElementState, KeyEvent, WindowEvent},
+    event_loop::EventLoop,
     keyboard::{Key, NamedKey},
     window::Window,
 };
 
 pub fn open(layout: &LayoutTree) {
+    // Check if we should render to file instead of window
+    let screenshot_path = std::env::var("AURORA_SCREENSHOT");
+    if let Ok(path) = screenshot_path {
+        render_to_file(layout, &path);
+        return;
+    }
+
     let event_loop = EventLoop::new().expect("failed to create event loop");
     let mut app = AuroraApp::new(layout);
-    
+
     event_loop.run_app(&mut app).expect("failed to run event loop");
+}
+
+fn render_to_file(layout: &LayoutTree, path: &str) {
+    use image::{ImageBuffer, Rgba};
+
+    eprintln!("Rendering to PNG: {}", path);
+
+    let width = 1200u32;
+    let height = 1024u32;
+
+    // Create a white background
+    let mut img = ImageBuffer::new(width, height);
+
+    // Fill with white
+    for pixel in img.pixels_mut() {
+        *pixel = Rgba([255, 255, 255, 255]);
+    }
+
+    // Render the actual layout tree with text
+    render_layout_with_text(layout, &mut img, 0, 0);
+
+    // Save to file
+    if let Err(e) = img.save(path) {
+        eprintln!("Failed to save screenshot: {}", e);
+    } else {
+        eprintln!("Screenshot saved to {}", path);
+    }
+}
+
+fn render_layout_with_text(
+    layout: &LayoutTree,
+    img: &mut image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+    offset_x: i32,
+    offset_y: i32,
+) {
+    let root = layout.root();
+    fn walk(
+        box_node: &crate::layout::LayoutBox,
+        img: &mut image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+        offset_x: i32,
+        offset_y: i32,
+    ) {
+        let rect = box_node.rect();
+
+        // Draw background for containers
+        if !box_node.children().is_empty() && box_node.text().is_none() && !box_node.is_image() {
+            let styles = box_node.styles();
+            let bg_color_str = styles.get("background-color").or_else(|| styles.get("background")).unwrap_or("transparent");
+
+            if bg_color_str != "transparent" {
+                let color = parse_screenshot_color(bg_color_str);
+                draw_rect(img,
+                    (rect.x as i32 + offset_x) as u32,
+                    (rect.y as i32 + offset_y) as u32,
+                    rect.width as u32,
+                    rect.height as u32,
+                    color
+                );
+            }
+        }
+
+        // Render images as colored placeholders
+        if box_node.is_image() {
+            let color = image::Rgba([220, 235, 250, 255]);  // Light blue
+            draw_rect(img,
+                (rect.x as i32 + offset_x) as u32,
+                (rect.y as i32 + offset_y) as u32,
+                rect.width as u32,
+                rect.height as u32,
+                color
+            );
+
+            // Draw border
+            draw_border(img,
+                (rect.x as i32 + offset_x) as u32,
+                (rect.y as i32 + offset_y) as u32,
+                rect.width as u32,
+                rect.height as u32,
+                image::Rgba([100, 150, 200, 255])  // Medium blue
+            );
+        }
+
+        // Render text
+        if let Some(text) = box_node.text() {
+            let styles = box_node.styles();
+            let color_str = styles.get("color").unwrap_or("black");
+            let color = parse_screenshot_color(color_str);
+            let font_size = styles.font_size_px().filter(|&s| s > 0.0).unwrap_or(16.0);
+
+            render_text_simple(
+                img,
+                text,
+                (rect.x as i32 + offset_x) as i32,
+                (rect.y as i32 + offset_y) as i32,
+                color,
+                (font_size * 0.75).max(4.0) as u32,  // Scale to 75% for better fit on screenshot
+            );
+        }
+
+        // Recurse to children
+        for child in box_node.children() {
+            walk(child, img, offset_x, offset_y);
+        }
+    }
+
+    walk(&root, img, offset_x, offset_y);
+}
+
+fn draw_border(
+    img: &mut image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    color: image::Rgba<u8>,
+) {
+    let (width, height) = img.dimensions();
+
+    // Top and bottom edges
+    for px in x..=(x + w).min(width - 1) {
+        if y < height {
+            img.put_pixel(px, y, color);
+        }
+        if y + h < height {
+            img.put_pixel(px, y + h, color);
+        }
+    }
+
+    // Left and right edges
+    for py in y..=(y + h).min(height - 1) {
+        if x < width {
+            img.put_pixel(x, py, color);
+        }
+        if x + w < width {
+            img.put_pixel(x + w, py, color);
+        }
+    }
+}
+
+fn render_text_simple(
+    img: &mut image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+    text: &str,
+    x: i32,
+    y: i32,
+    color: image::Rgba<u8>,
+    font_size: u32,
+) {
+    let (width, height) = img.dimensions();
+
+    // Use font size directly for better readability (not scaled down)
+    let char_width = font_size.max(4) as i32;
+    let char_height = (font_size * 2) as i32;  // Height is typically 1.5-2x width
+
+    let mut cx = x;
+    let mut cy = y;
+
+    for ch in text.chars() {
+        if ch == '\n' {
+            cx = x;
+            cy += char_height;
+            continue;
+        }
+
+        if cx + char_width > width as i32 {
+            cx = x;
+            cy += char_height;
+        }
+
+        // Draw character as a filled rectangle
+        for dy in 0..char_height {
+            for dx in 0..char_width {
+                let px = cx + dx;
+                let py = cy + dy;
+                if px >= 0 && py >= 0 && (px as u32) < width && (py as u32) < height {
+                    img.put_pixel(px as u32, py as u32, color);
+                }
+            }
+        }
+
+        cx += char_width;
+    }
+}
+
+fn parse_screenshot_color(color_str: &str) -> image::Rgba<u8> {
+    let color_str = color_str.trim().to_lowercase();
+
+    // Parse hex colors
+    if color_str.starts_with('#') {
+        let hex = &color_str[1..];
+        if hex.len() == 6 {
+            if let Ok(c) = u32::from_str_radix(hex, 16) {
+                return image::Rgba([
+                    ((c >> 16) & 0xFF) as u8,
+                    ((c >> 8) & 0xFF) as u8,
+                    (c & 0xFF) as u8,
+                    255,
+                ]);
+            }
+        }
+    }
+
+    // Default colors
+    match color_str.as_str() {
+        "black" => image::Rgba([0, 0, 0, 255]),
+        "white" => image::Rgba([255, 255, 255, 255]),
+        "red" => image::Rgba([255, 0, 0, 255]),
+        "blue" => image::Rgba([0, 0, 255, 255]),
+        "green" => image::Rgba([0, 128, 0, 255]),
+        "gray" | "grey" => image::Rgba([128, 128, 128, 255]),
+        "coal" => image::Rgba([0x2E, 0x34, 0x40, 255]),  // Aurora color
+        _ => image::Rgba([64, 64, 64, 255]),  // Default dark gray
+    }
+}
+
+
+fn draw_rect(
+    img: &mut image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    color: image::Rgba<u8>,
+) {
+    let (width, height) = img.dimensions();
+
+    for py in y..=(y + h).min(height - 1) {
+        for px in x..=(x + w).min(width - 1) {
+            if px < width && py < height {
+                img.put_pixel(px, py, color);
+            }
+        }
+    }
 }
 
 struct AuroraApp<'a> {

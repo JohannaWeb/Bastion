@@ -10,11 +10,13 @@ pub struct ElementData {
 
 pub struct Stylesheet {
     pub rules: Vec<Rule>,
+    pub variables: BTreeMap<String, String>,  // CSS custom properties (--name: value)
 }
 
 impl Stylesheet {
     pub fn merge(&mut self, other: Stylesheet) {
         self.rules.extend(other.rules);
+        self.variables.extend(other.variables);
     }
 
     pub fn user_agent_stylesheet() -> Self {
@@ -33,6 +35,7 @@ impl Stylesheet {
 
     pub fn parse(source: &str) -> Self {
         let mut rules = Vec::new();
+        let mut variables = BTreeMap::new();
 
         for (source_order, chunk) in source.split('}').enumerate() {
             let chunk = chunk.trim();
@@ -44,6 +47,7 @@ impl Stylesheet {
                 continue;
             };
 
+            let selector_part = selector_part.trim();
             let declarations = declarations_part
                 .split(';')
                 .filter_map(|declaration| {
@@ -53,10 +57,15 @@ impl Stylesheet {
                     }
 
                     let (name, value) = declaration.split_once(':')?;
-                    Some(Declaration {
-                        name: name.trim().to_string(),
-                        value: value.trim().to_string(),
-                    })
+                    let name = name.trim().to_string();
+                    let value = value.trim().to_string();
+
+                    // Collect CSS custom properties (--name)
+                    if name.starts_with("--") && (selector_part == ":root" || selector_part == "*") {
+                        variables.insert(name.clone(), value.clone());
+                    }
+
+                    Some(Declaration { name, value })
                 })
                 .collect::<Vec<_>>();
 
@@ -81,7 +90,7 @@ impl Stylesheet {
             }
         }
 
-        Self { rules }
+        Self { rules, variables }
     }
 
     pub fn from_dom(document: &NodePtr, base_url: Option<&str>, identity: &opus::domain::Identity) -> Self {
@@ -102,13 +111,80 @@ impl Stylesheet {
 
         for rule in matching_rules {
             for declaration in &rule.declarations {
+                // Resolve CSS variables in the value
+                let resolved_value = self.resolve_variables(&declaration.value);
                 styles
                     .0
-                    .insert(declaration.name.clone(), declaration.value.clone());
+                    .insert(declaration.name.clone(), resolved_value);
             }
         }
 
         styles
+    }
+
+    /// Resolve CSS variables (var(--name)) in a value, including fallbacks
+    pub fn resolve_variables(&self, value: &str) -> String {
+        let mut result = value.to_string();
+        let mut iterations = 0;
+        const MAX_ITERATIONS: usize = 100;  // Prevent infinite loops
+
+        loop {
+            iterations += 1;
+            if iterations > MAX_ITERATIONS {
+                break;
+            }
+
+            let start = match result.find("var(") {
+                Some(idx) => idx,
+                None => break,
+            };
+
+            // Find the matching closing paren, accounting for nested parens
+            let mut paren_depth = 1;
+            let mut end_pos = start + 4;
+            for (i, ch) in result[start + 4..].chars().enumerate() {
+                if ch == '(' {
+                    paren_depth += 1;
+                } else if ch == ')' {
+                    paren_depth -= 1;
+                    if paren_depth == 0 {
+                        end_pos = start + 4 + i;
+                        break;
+                    }
+                }
+            }
+
+            if paren_depth != 0 {
+                break;  // Unmatched parens
+            }
+
+            let var_content = &result[start + 4..end_pos];
+
+            // Split on first comma to separate variable name from fallback
+            let (var_name, fallback) = if let Some(comma_idx) = var_content.find(',') {
+                let name = var_content[..comma_idx].trim();
+                let fb = var_content[comma_idx + 1..].trim();
+                (name.to_string(), Some(fb.to_string()))
+            } else {
+                (var_content.trim().to_string(), None)
+            };
+
+            // Try to resolve the variable
+            let replacement = if let Some(var_value) = self.variables.get(&var_name) {
+                var_value.clone()
+            } else if let Some(fb) = fallback {
+                // Use fallback if variable not found
+                fb
+            } else {
+                // No variable and no fallback, keep original
+                break;
+            };
+
+            // Replace var(...) with the resolved value
+            result.replace_range(start..end_pos + 1, &replacement);
+        }
+
+        result
     }
 }
 

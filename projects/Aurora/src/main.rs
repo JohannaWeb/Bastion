@@ -2,6 +2,7 @@ mod dom;
 mod css;
 mod fetch;
 mod font;
+mod atlas;
 mod html;
 mod layout;
 mod paint;
@@ -94,7 +95,19 @@ fn main() {
 
     // Open GPU window for rendering
     println!("{layout}");
-    window::open(&layout);
+
+    // Initialize font atlas early
+    let _ = crate::font::get_glyph_metrics('A');
+
+    // Check if we need to render output (screenshot or interactive window)
+    let has_screenshot = env::var("AURORA_SCREENSHOT").is_ok();
+    let is_headless = env::var("AURORA_HEADLESS").is_ok();
+
+    if has_screenshot || !is_headless {
+        window::open(&layout);
+    } else {
+        eprintln!("Headless mode: skipping window");
+    }
 }
 
 fn demo_html() -> &'static str {
@@ -102,9 +115,10 @@ fn demo_html() -> &'static str {
         <html>
             <head>
                 <style>
-                    h1 { color: #d26428; font-weight: bold; }
-                    h2 { color: #2E3440; font-size: 24px; margin-top: 20px; }
-                    code { color: #BF616A; }
+                    h1 { color: #d26428; font-weight: bold; font-size: 48px; }
+                    h2 { color: #2E3440; font-size: 32px; margin-top: 20px; }
+                    p { font-size: 20px; }
+                    code { color: #BF616A; font-size: 20px; }
                 </style>
             </head>
             <body>
