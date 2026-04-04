@@ -4,7 +4,7 @@
 
 Opus is not modeled as "an editor with a chatbot." It is modeled as a policy-enforced execution environment for humans, agents, plugins, and organizations.
 
-The protocol layer is the product.
+In the current repository, that execution model is still a prototype.
 
 ## Core objects
 
@@ -55,9 +55,9 @@ Policies are owned by a human identity and classify capabilities into:
 
 That makes approval semantics legible instead of hidden inside agent prompts.
 
-### Signed event ledger
+### Event ledger
 
-Every state transition is recorded as a signed event:
+Every state transition is recorded as a ledger event:
 
 - request
 - approval request
@@ -66,7 +66,7 @@ Every state transition is recorded as a signed event:
 - execution
 - denial
 
-The ledger is the provenance record that can later flow into code review, CI, deployment, and audit systems.
+The current implementation uses a demo authenticity mechanism for ledger entries. It is useful for modeling event flow, but it should not be described as production-grade signing.
 
 ## Why DID belongs here
 
@@ -88,4 +88,4 @@ The most direct next implementation step is to wrap the runtime in a Tauri shell
 3. Terminal, file system, and model adapters become plugins with identities.
 4. Patch generation, review, and command execution emit signed ledger events.
 
-That preserves the product thesis: every AI action is identity-bound, policy-aware, and provable.
+That preserves the product thesis: every AI action is identity-bound, policy-aware, and reviewable.

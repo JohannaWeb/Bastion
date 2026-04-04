@@ -1,10 +1,12 @@
 # Gisberta
 
-`Gisberta` is a custom browser build based on Servo's official `servoshell`, written in Rust.
+`Gisberta` is a custom browser build based on Servo's `servoshell`.
+
+This directory currently contains only the top-level README. The actual Servo source tree referenced below is expected to live elsewhere in the developer's workspace.
 
 ## Build
 
-From [`vendor/servo`](/home/johanna/projects/Gisberta/vendor/servo):
+From the Servo checkout used for this project:
 
 ```bash
 cargo run -p servoshell --bin gisberta
@@ -18,5 +20,5 @@ cargo run -p servoshell --bin gisberta
 
 ## Notes
 
-- This repo vendors Servo directly so the browser is using the actual Servo engine, not a placeholder wrapper.
+- This project uses Servo itself rather than a wrapper around another browser engine.
 - Building Servo can require system libraries depending on platform, especially for desktop graphics and media.

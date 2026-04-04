@@ -1,39 +1,48 @@
-# Falcon Bridge Monorepo
+# Falcon Bridge
 
-Welcome to the **Falcon Bridge** project, a unified platform for decentralized communication and human-AI collaboration. This repository consolidates multiple protocol implementations and a dedicated bridging service.
+Falcon Bridge is a bridge-oriented repository for experiments connecting Bastion's AT Protocol work with ActivityPub-oriented services.
 
-## Project Structure
+This directory is a mixed repository: it contains a Rust bridge service in `falcon-bridge/` plus copied or vendored sibling projects used during development. It is more of an integration workspace than a tidy standalone product repo.
 
-This monorepo contains the following primary services:
+## What Is Here
 
-### 1. [ProjectFalcon](./ProjectFalcon)
-A sophisticated decentralized systems platform built on the **AT Protocol** (Bluesky).
-- **Stack**: Java 25, Spring Boot 4.
-- **Key Features**: Graph-based trust model (STT), native ES256K JWT verification, and AI agent mesh.
+- `falcon-bridge/`: Rust bridge service with translation, relay, and resolver modules
+- `ProjectFalcon/`: a colocated copy of related AT Protocol work
+- `FalconPub/`: a colocated copy of related ActivityPub work
+- `manifesto.md`: project framing
 
-### 2. [FalconPub](./FalconPub)
-A federated community platform built with **Rust** and **ActivityPub**.
-- **Stack**: Rust, Axum, SQLite.
-- **Key Features**: Discord-style servers and channels, ActivityPub federation (Actor, Inbox, Outbox), and high-performance async processing.
+## Bridge Service
 
-### 3. [Falcon Bridge](./falcon-bridge)
-The central coordination layer that enables cross-protocol communication.
-- **Stack**: Rust (Axum, reqwest, k256).
-- **Responsibilities**: 
-  - Two-way translation between AT Protocol and ActivityPub.
-  - Stateful identity mapping (DID ↔ Actor).
-  - Live relaying with cryptographic HTTP Signatures.
-  - DID Resolution (did:plc, did:web).
+The Rust bridge service currently uses:
 
-## Getting Started
+- Axum
+- Tokio
+- SQLx with SQLite
+- Reqwest
+- `k256`
 
-Refer to the individual service directories for specific build and installation instructions.
+The source files suggest three main responsibilities:
 
-### Prerequisites
-- **Java 25+** (for ProjectFalcon)
-- **Rust 1.75+** (for FalconPub and Falcon Bridge)
-- **Node.js 20+** (for frontend components)
+- translating payloads between systems
+- relaying events or messages
+- resolving identities and related remote references
+
+## Running
+
+For the Rust bridge service:
+
+```bash
+cd falcon-bridge
+cargo run
+```
+
+For the nested `ProjectFalcon/` and `FalconPub/` directories, use their own READMEs and entrypoints instead of treating this repository root as the place to start everything at once.
+
+## Notes
+
+- This repository is better treated as an integration workspace than as a polished monorepo.
+- If you want strict source-of-truth docs for the nested projects, prefer the top-level copies under `projects/ProjectFalcon` and `projects/FalconPub`.
 
 ## License
 
-This project is licensed under the [MIT License](./LICENSE).
+MIT

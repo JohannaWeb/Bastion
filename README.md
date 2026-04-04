@@ -2,7 +2,7 @@
 [![Live](https://img.shields.io/badge/juntos.chat-live-brightgreen)](https://juntos.chat)
 [![Rust](https://img.shields.io/badge/rust-systems-orange)](https://github.com/JohannaWeb/Bastion)
 [![Java](https://img.shields.io/badge/java-AT%20Protocol-blue)](https://github.com/JohannaWeb/ProjectFalcon)
-# Bastion — Sovereign Developer Infrastructure
+# Bastion
 
 **Juntos is live:** https://juntos.chat
 <img width="1998" height="1046" alt="image" src="https://github.com/user-attachments/assets/8f352359-f8a1-46d2-8990-524230e2254f" />
@@ -12,21 +12,22 @@
 
 ---
 
-## The Problem
+## What This Repo Is
 
-The current developer stack is owned by three companies. Agents are opaque. Permissions are bolted on. Provenance is missing. Identity is rented.
+Bastion is an umbrella repo for a group of related projects around identity, developer tooling, protocol work, and client software.
 
-When AI starts acting on your behalf, this stops being a UX problem and becomes an infrastructure problem.
+The important qualification is that these projects are at very different stages:
 
-## The Thesis
+- `Juntos` is live
+- `ProjectFalcon` is substantial backend/protocol code behind that live system
+- `Aurora` and `Opus` are real Rust prototypes
+- several other directories are experiments, integration work, or research tracks
 
-Bastion is a vertically integrated sovereign computing stack — from the OS layer to the browser, IDE, AI model, and social protocol.
-
-The core bet: execution should be capability-bound, actions should be signed and auditable, collaboration should be protocol-native, and the stack should be owned — not rented.
+If you are reading this from a Rust background, the honest framing is: this repo contains some shipped work, some serious prototypes, and some ideas that are not mature yet.
 
 ## Live Today
 
-**Juntos** — the world's first pure AT Protocol implementation of real-time decentralized chat. No wrappers. No non-spec extensions. Built for trans and queer communities. Running in production.
+**Juntos** is the clearest proof that this repo is not just ideas. It is live, user-facing, and built on the protocol work in this ecosystem.
 
 → https://juntos.chat
 
@@ -35,60 +36,55 @@ The core bet: execution should be capability-bound, actions should be signed and
 ## The Stack
 
 ### Execution & Trust
-**Opus** — Sovereign developer runtime and IDE. Every principal (developer, agent, plugin, organization) has a DID-like identifier with declared capabilities, approvals, and signed provenance. Not an editor with a chatbot — a policy-enforced execution environment.
+**Opus** is a Rust prototype for an identity-aware developer runtime. Right now it is mostly a policy, approval, and ledger model with a small UI shell around it.
 
 ### Protocol & Collaboration
-**ProjectFalcon** — World-first native JVM implementation of AT Protocol. Hand-rolled ES256K/secp256k1 cryptographic verification. Adversarial trust protocol with Sybil resistance, temporal decay, and on-chain attestation via EAS. Directly addresses the bootstrapping vulnerability in EigenTrust (Kamvar et al.).
+**ProjectFalcon** is the backend and protocol work behind Juntos and the surrounding AT Protocol experiments.
 
-**FalconPub + Falcon-Bridge** — ActivityPub federation server and interoperability layer between AT Protocol and the Fediverse.
+**FalconPub + Falcon-Bridge** are the federation and bridge experiments for ActivityPub and related interop work.
 
 ### Intelligence
-**Monarch** — Mistral-based fine-tune trained on the Bastion codebase. 4-bit quantization, aggressive KV cache compression, RAG. Stack-native intelligence, not generic assistant behavior. Runs on a 4060 Ti.
+**Monarch** is the local-model training and inference track.
 
 ### Client
-**Aurora** — Hand-rolled Rust browser engine and sovereign shell. No Chromium. No WebView. Full HTML parser, CSS cascade engine, GPU rendering pipeline, box model layout. DID-native identity and AT Protocol integration built in.
+**Aurora** is a from-scratch Rust rendering and browser experiment. It has real code, but it is still a narrow prototype rather than a full browser.
 
-**Gisberta** — A custom browser build based on Servo.
+**Gisberta** is a custom browser effort built on top of Servo.
 
 ### Compute
-**MonarchOS** — 64-bit Rust kernel. Custom process scheduler, memory manager, decentralized identity runtime. The long-term machine layer.
+**MonarchOS** is the long-term OS direction. It is here as a direction of travel, not as a finished platform.
 
 ---
 
-## Why It Compounds
+## How To Read This Repo
 
-Each layer makes the others stronger.
+Bastion is best read as a working notebook plus implementation repo for a larger direction:
 
-- `Opus` makes AI execution governable
-- `ProjectFalcon` makes identity and collaboration portable
-- `FalconPub` and `Falcon-Bridge` expand that across protocols
-- `Monarch` reasons inside the same trust and domain model
-- `Aurora` and `MonarchOS` extend sovereignty down to the metal
+1. `Juntos` is the live thing.
+2. `ProjectFalcon` is a big part of the backend and protocol foundation behind it.
+3. `Opus` and `Aurora` are where a lot of the Rust systems experimentation lives.
+4. `FalconPub`, `Falcon-Bridge`, `Monarch`, `Gisberta`, and `MonarchOS` are adjacent efforts that may or may not mature at the same pace.
 
-This is not a collection of side projects. It is one vertically integrated stack, built solo, in 36 days, on a 4060 Ti, in Porto.
+## What To Judge
 
----
+The easiest way to read this repo fairly is to judge each project at its actual boundary:
 
-## System Orchestration
+- judge `Juntos` as a live application
+- judge `ProjectFalcon` as backend/protocol implementation work
+- judge `Aurora` as an early rendering engine prototype
+- judge `Opus` as a runtime/policy model prototype
 
-Bastion is not just a collection of repositories; it is a live coordination system.
-
-1.  **Identity**: `ProjectFalcon` (JVM) handles the heavy lifting of AT Protocol identity and cryptographic trust graphs.
-2.  **Runtime**: `Opus` (Rust/Tauri) consumes those identities to enforce capability-bound execution of AI and developer actions.
-3.  **Social**: `Juntos` (Web) provides the human interface for community coordination using the same `ProjectFalcon` substrate.
-4.  **Interop**: `Falcon-Bridge` ensures these identities and actions can be seen and verified across the Fediverse via `FalconPub`.
-5.  **Intelligence**: `Monarch` (LLM) is fine-tuned to reason within this specific trust model, signing its suggestions through `Opus`.
-6.  **Surface**: `Aurora` (Rust Engine) and `MonarchOS` (Rust Kernel) provide the owned hardware and client surface where these protocols terminate securely.
+The repo will look worse if everything is read as a finished product line. It will look more accurate if each subproject is read at its own level of maturity.
 
 ---
 
 ## Research
 
-Three papers published March 2026:
+There are also papers and research notes linked from the relevant project repositories and releases:
 
-1. **[Project Falcon: An Adversarial Algorithmic Trust Protocol for Decentralized Social Identity](https://github.com/JohannaWeb/ProjectFalcon/releases/tag/v1.0-paper)** — formal security analysis, SIV bootstrapping, EigenTrust vulnerability fix
-2. **[Identity-Driven Discourse Systems (IDDS) v2.1](https://github.com/JohannaWeb/Monarch/releases/tag/2.1.paper)** — conflict modeling, MPF detection, Sovereign Moderation framework
-3. **[Radical Alignment: Training AI through the Lens of bell hooks' Radical Love](https://github.com/JohannaWeb/Juntos/releases/tag/0.0.1)** — alignment framework grounded in care ethics
+1. **[Project Falcon: An Adversarial Algorithmic Trust Protocol for Decentralized Social Identity](https://github.com/JohannaWeb/ProjectFalcon/releases/tag/v1.0-paper)**
+2. **[Identity-Driven Discourse Systems (IDDS) v2.1](https://github.com/JohannaWeb/Monarch/releases/tag/2.1.paper)**
+3. **[Radical Alignment: Training AI through the Lens of bell hooks' Radical Love](https://github.com/JohannaWeb/Juntos/releases/tag/0.0.1)**
 
 ---
 
@@ -111,7 +107,7 @@ projects/
 
 ## Support
 
-Self-funded. If this work matters to you:
+This work is self-funded. If you want to support it:
 
 → [GitHub Sponsors](https://github.com/sponsors/JohannaWeb)  
 → [Buy Me a Coffee](https://buymeacoffee.com/johannaweb)

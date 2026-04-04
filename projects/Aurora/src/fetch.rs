@@ -1,7 +1,5 @@
 use rustls::pki_types::ServerName;
-use rustls::{ClientConfig, ClientConnection, StreamOwned};
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::pki_types::CertificateDer;
+use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use webpki_roots::TLS_SERVER_ROOTS;
 use std::path::{Path, PathBuf};
 use std::fmt::{self, Display, Formatter};
@@ -79,12 +77,15 @@ impl ParsedUrl {
             (authority.to_string(), default_port)
         };
 
-        Ok(Self {
+        let parsed = Self {
             scheme,
             host,
             port,
             path_and_query,
-        })
+        };
+
+        parsed.validate()?;
+        Ok(parsed)
     }
 
     fn authority(&self) -> String {
@@ -109,6 +110,21 @@ impl ParsedUrl {
             Scheme::Http => "http://",
             Scheme::Https => "https://",
         }
+    }
+
+    fn validate(&self) -> Result<(), FetchError> {
+        if self.host.is_empty()
+            || self.host.chars().any(|ch| ch.is_ascii_control() || ch.is_ascii_whitespace())
+            || self.path_and_query.chars().any(|ch| ch.is_ascii_control())
+        {
+            return Err(FetchError::InvalidUrl(format!(
+                "{}{}",
+                self.authority(),
+                self.path_and_query
+            )));
+        }
+
+        Ok(())
     }
 }
 
@@ -149,6 +165,7 @@ pub fn fetch_html(url: &str, identity: &Identity) -> Result<String, FetchError> 
 
 pub fn fetch_string(url: &str, identity: &Identity) -> Result<String, FetchError> {
     if let Some(path) = url.strip_prefix("file://") {
+        require_file_access(identity)?;
         return std::fs::read_to_string(path).map_err(FetchError::Io);
     }
 
@@ -163,6 +180,7 @@ pub fn fetch_string(url: &str, identity: &Identity) -> Result<String, FetchError
 
 pub fn fetch_bytes(url: &str, identity: &Identity) -> Result<Vec<u8>, FetchError> {
     if let Some(path) = url.strip_prefix("file://") {
+        require_file_access(identity)?;
         return std::fs::read(path).map_err(FetchError::Io);
     }
 
@@ -337,25 +355,20 @@ fn send_request(url: &ParsedUrl) -> Result<HttpResponse, FetchError> {
         url.authority(),
     );
 
-    println!("Fetch: Connecting to {}...", url.socket_addr());
     match url.scheme {
         Scheme::Http => {
             let mut stream = TcpStream::connect(url.socket_addr())?;
-            println!("Fetch: Connected (HTTP)");
             stream.write_all(request.as_bytes())?;
             read_response_bytes(&mut stream)
         }
         Scheme::Https => {
             let stream = TcpStream::connect(url.socket_addr())?;
-            println!("Fetch: Connected (TCP for HTTPS)");
             let config = tls_config();
             let server_name = ServerName::try_from(url.host.clone())
                 .map_err(|_| FetchError::InvalidUrl(url.host.clone()))?;
             let connection = ClientConnection::new(config, server_name)?;
             let mut tls_stream = StreamOwned::new(connection, stream);
-            println!("Fetch: Starting TLS handshake...");
             tls_stream.write_all(request.as_bytes())?;
-            println!("Fetch: Request sent, reading response...");
             read_response_bytes(&mut tls_stream)
         }
     }
@@ -363,7 +376,6 @@ fn send_request(url: &ParsedUrl) -> Result<HttpResponse, FetchError> {
 
 fn read_response_bytes<R: Read>(reader: &mut R) -> Result<HttpResponse, FetchError> {
     let mut response = Vec::new();
-    println!("Fetch: Reading bytes...");
     if let Err(e) = reader.read_to_end(&mut response) {
         if e.kind() != std::io::ErrorKind::UnexpectedEof {
             return Err(FetchError::Io(e));
@@ -377,59 +389,24 @@ fn read_response_bytes<R: Read>(reader: &mut R) -> Result<HttpResponse, FetchErr
     HttpResponse::parse(&response)
 }
 
-/// Development certificate verifier that accepts all certificates
-#[derive(Debug)]
-struct AcceptAllVerifier;
-
-impl ServerCertVerifier for AcceptAllVerifier {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        // Accept all certificates for development/testing
-        Ok(ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            rustls::SignatureScheme::RSA_PKCS1_SHA384,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
-        ]
-    }
-}
-
 fn tls_config() -> Arc<ClientConfig> {
-    // For development: accept all certificates
+    let root_store = RootCertStore::from_iter(TLS_SERVER_ROOTS.iter().cloned());
     Arc::new(
         ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(AcceptAllVerifier))
+            .with_root_certificates(root_store)
             .with_no_client_auth(),
     )
+}
+
+fn require_file_access(identity: &Identity) -> Result<(), FetchError> {
+    if identity.default_capabilities.contains(&Capability::ReadWorkspace) {
+        Ok(())
+    } else {
+        Err(FetchError::InvalidUrl(format!(
+            "Identity {} lacks workspace.read capability",
+            identity.did
+        )))
+    }
 }
 
 #[derive(Debug)]

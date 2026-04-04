@@ -1,16 +1,18 @@
-# Aurora — Sovereign Browser Engine
+# Aurora
 
-Aurora is the flagship Rust browser engine for the **Bastion sovereign developer stack**. It is a from-scratch implementation designed for an owned client surface, free from Chromium or traditional WebView dependencies.
+Aurora is a from-scratch Rust browser-engine experiment for the Bastion project.
 
-## The Thesis
+It is not a complete browser. The current codebase implements a narrow rendering slice because I wanted to explore layout, painting, and client-surface ideas without leaning on Chromium or a WebView.
 
-In a world where agents act on behalf of users, the browser must be more than a renderer; it must be a trusted termination point for protocols. Aurora is built to eventually integrate:
+## Current Scope
+
+Longer-term ideas include:
 
 - **DID-Native Identity**: Identity resolution built into the browser's core.
 - **AT Protocol Integration**: Native support for decentralized coordination.
 - **Sovereign Render Path**: A GPU-accelerated rendering pipeline owned by the user.
 
-Current experimental slice:
+What the current code actually does today:
 
 - tokenize a narrow HTML subset
 - build a simple DOM tree
@@ -22,9 +24,21 @@ Current experimental slice:
 - paint the result via **Vello** (WGPU-accelerated vector graphics)
 - interactive window with scrolling support
 
-## The Render Loop
+## What It Does Not Do
 
-Aurora's rendering pipeline is built on a modern, GPU-native stack:
+Aurora is not trying to pass as a general-purpose browser yet. In particular, it does not currently claim:
+
+- full HTML parsing
+- broad CSS coverage
+- browser-grade JavaScript/runtime behavior
+- web compatibility
+- spec compliance across normal browser test suites
+
+If you want to judge it harshly, judge it as a rendering/layout prototype, not as a Chrome replacement.
+
+## Rendering Path
+
+Aurora currently uses a GPU-backed rendering path:
 
 1.  **Event Loop**: `winit` manages the window and user input (scrolling, resizing).
 2.  **Scene Construction**: On every frame, a new `vello::Scene` is initialized.
@@ -63,12 +77,14 @@ Optional debug dumps:
 cargo run -- --fixture google-homepage --debug-dom --debug-style --debug-layout
 ```
 
-Current fetch support is intentionally small:
+Fetch support is intentionally small:
 
 - `http://` and `https://`
 - `file://`
 - basic redirects
 - remote images render as placeholders using `<img>` layout and alt text
+
+HTTPS now uses normal certificate validation. Local `file://` fetches are only allowed when the provided identity has `workspace.read`.
 
 ## Test
 
@@ -76,10 +92,12 @@ Current fetch support is intentionally small:
 cargo test
 ```
 
-## Next steps
+At the time of this edit, `cargo test` passes in this directory. That matters more than any marketing sentence in the README.
+
+## Next Steps
 
 1. Add a real tokenizer state machine.
 2. Add more inherited properties and better CSS value handling.
 3. Improve layout with inline flow, wrapping, and margins.
 4. Support dynamic glyph atlas growth and multi-font chains.
-5. Integrate native **AT Protocol** identity resolution.
+5. Explore protocol-native identity integration once the rendering core is more stable.

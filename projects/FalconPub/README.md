@@ -1,38 +1,38 @@
 # FalconPub
 
-A federated community platform built with **Rust** and **ActivityPub**.
+FalconPub is an ActivityPub-oriented application split into a Rust backend and a web frontend.
 
-## Stack
+This repository is an implementation experiment around federation, community spaces, and messaging. The safe claim is that it contains a real Rust service and frontend scaffold, not that every protocol surface is fully complete.
 
-| Layer | Technology |
-|---|---|
-| Backend | Rust + Axum |
-| Protocol | ActivityPub (Fediverse) |
-| Crypto | Native ES256K (`k256` crate) |
-| Database | SQLite via `sqlx` |
-| Frontend | React + TypeScript (Vite) |
+## Layout
 
-## Features
+- `falcon-rust/`: Rust backend built with Axum and SQLx
+- `falcon-web/`: React/Vite frontend
 
--  **ActivityPub federation** — Actor, Inbox, Outbox, WebFinger
--  **Native ES256K signing** — secp256k1 ECDSA, no JVM required
--  **Servers & Channels** — Discord-style community spaces
--  **Direct Messages** — Private conversations between users
--  **Async Rust** — Tokio + Axum for high-performance HTTP
+## Backend Stack
 
-## Getting Started
+- Rust
+- Axum
+- Tokio
+- SQLx with SQLite
+- `k256` for secp256k1-related crypto work
 
-### Backend
+## Frontend Stack
+
+- React
+- TypeScript
+- Vite
+
+## Running
+
+Backend:
 
 ```bash
 cd falcon-rust
-cargo run --release
-# Listening on http://0.0.0.0:8080
+cargo run
 ```
 
-Set `DATABASE_URL` to override the default `sqlite:falcon.db`.
-
-### Frontend
+Frontend:
 
 ```bash
 cd falcon-web
@@ -40,24 +40,18 @@ npm install
 npm run dev
 ```
 
-## API Endpoints
+If you need a custom database path for the backend, set `DATABASE_URL`.
 
-| Method | Route | Description |
-|---|---|---|
-| GET | `/xrpc/app.falcon.server.list` | List servers |
-| POST | `/xrpc/app.falcon.server.create` | Create server |
-| GET | `/xrpc/app.falcon.server.get` | Get server |
-| POST | `/xrpc/app.falcon.server.invite` | Invite member |
-| GET | `/xrpc/app.falcon.channel.list` | List channels |
-| POST | `/xrpc/app.falcon.channel.create` | Create channel |
-| POST | `/xrpc/app.falcon.channel.postMessage` | Post message |
-| GET | `/xrpc/app.falcon.channel.getMessages` | Get messages |
-| GET/POST | `/xrpc/app.falcon.convo.*` | Direct messages |
-| GET | `/actor/:name` | ActivityPub Actor |
-| POST | `/inbox` | ActivityPub Inbox |
-| GET | `/actor/:name/outbox` | ActivityPub Outbox |
-| GET | `/.well-known/webfinger` | WebFinger discovery |
+## Current Scope
+
+Based on the repository layout and source files, FalconPub currently covers:
+
+- a Rust HTTP service with API and crypto modules
+- a SQLite schema
+- a separate web client
+
+The old README listed a large set of specific routes and features. Unless you have recently verified each one against the running service, it is better to treat those as implementation goals rather than guaranteed surface area.
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT

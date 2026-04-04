@@ -107,7 +107,8 @@ pub fn get_glyph_metrics(ch: char) -> Option<crate::atlas::GlyphMetrics> {
 }
 
 pub fn measure_text(text: &str, font_size: f32) -> f32 {
-    layout_text_run(text, font_size).width
+    // Keep layout width deterministic even though rendering uses shaped glyphs.
+    text.chars().count() as f32 * font_size
 }
 
 #[derive(Debug, Clone)]
