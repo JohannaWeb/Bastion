@@ -1,4 +1,6 @@
 // Import CSS layout properties
+// RUST FUNDAMENTAL: Large modules often import many related domain types at once.
+// Grouping them in one `use` keeps signatures shorter and makes it obvious which concepts this file works with.
 use crate::css::{AlignItems, BoxSizing, DisplayMode, EdgeSizes, FlexDirection, JustifyContent, Margin, MarginValue, StyleMap, TextAlign};
 // Import styled DOM tree
 use crate::style::{StyleTree, StyledNode};
@@ -18,6 +20,8 @@ const TEXT_LINE_HEIGHT: f32 = 18.0;
 const INLINE_BOX_HEIGHT: f32 = 16.0;
 
 // Complete layout tree with positioned boxes
+// RUST FUNDAMENTAL: A dedicated wrapper type around the root box makes ownership and API boundaries clearer
+// than passing around a bare `LayoutBox` everywhere.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LayoutTree {
     // Root box of the layout tree (viewport)
@@ -25,6 +29,8 @@ pub struct LayoutTree {
 }
 
 // Single layout box with position, size, and styling
+// RUST FUNDAMENTAL: This struct is the core "computed layout" record.
+// Each box owns its own rectangle, style snapshot, and child boxes, so the whole layout tree is self-contained.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LayoutBox {
     // Type of layout box (block, inline, image, etc.)
@@ -44,6 +50,7 @@ pub struct LayoutBox {
 }
 
 // Enumeration of layout box types
+// RUST FUNDAMENTAL: Enums are a good fit when one conceptual thing can take several shapes with different associated data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LayoutKind {
     // Viewport (main rendering surface)
@@ -104,6 +111,7 @@ impl LayoutTree {
         viewport_width: f32,
     ) -> Self {
         // Build layout box tree starting from styled root
+        // RUST FUNDAMENTAL: `.expect(...)` is reasonable when failing here would indicate a logic bug rather than a normal runtime condition.
         let root = LayoutBox::layout_root(style_tree.root(), viewport_width)
             // Panic if root fails (shouldn't happen)
             .expect("style tree root must produce a viewport");
@@ -123,6 +131,8 @@ impl LayoutBox {
     // Create root viewport box with specified width
     fn layout_root(node: &StyledNode, viewport_width: f32) -> Option<Self> {
         // Build layout starting from position (0,0) with full width
+        // RUST FUNDAMENTAL: The `?` operator keeps this constructor concise by propagating `None`
+        // if the styled root cannot produce a layout box.
         let mut root = Self::from_styled_node(node, 0.0, 0.0, viewport_width)?;
         // Set viewport width to fill available space
         root.rect.width = viewport_width;
@@ -133,11 +143,14 @@ impl LayoutBox {
     // Layout a styled node recursively based on its type
     fn from_styled_node(node: &StyledNode, x: f32, y: f32, available_width: f32) -> Option<Self> {
         // Skip style and script tags (non-visual)
+        // RUST FUNDAMENTAL: Comparing against `Some("...".to_string())` works because `Option<String>` implements `PartialEq`,
+        // though it does allocate temporary strings each time.
         if node.tag_name() == Some("style".to_string()) || node.tag_name() == Some("script".to_string()) {
             return None;
         }
 
         // Dispatch based on node type
+        // RUST FUNDAMENTAL: Match guards like `None if node.text().is_none()` let one pattern branch on extra conditions.
         match node.tag_name() {
             // Document node without text becomes viewport
             None if node.text().is_none() => Some(Self::layout_container(
@@ -154,6 +167,7 @@ impl LayoutBox {
             // Element node - dispatch to element handler
             Some(tag_name) => Self::from_element(&tag_name, node, x, y, available_width),
             // Text node - layout as text
+            // RUST FUNDAMENTAL: `unwrap_or_default()` is a convenient fallback when the default value for the type is acceptable.
             None => Some(Self::layout_text(&node.text().unwrap_or_default(), node.styles().clone(), x, y)),
         }
     }
@@ -172,8 +186,11 @@ impl LayoutBox {
         available_width: f32,
     ) -> Option<Self> {
         // Get display mode from styles
+        // RUST FUNDAMENTAL: Cloning the `StyleMap` here means each layout box owns the style snapshot it was laid out with.
         let styles = node.styles().clone();
         // Dispatch based on display mode and tag type
+        // RUST FUNDAMENTAL: Pattern guards on match arms are useful when dispatch depends on both an enum variant
+        // and additional runtime data like the HTML tag name.
         match styles.display_mode() {
             // Display: none means don't render
             DisplayMode::None => None,
@@ -269,6 +286,7 @@ impl LayoutBox {
         y: f32,
         available_width: f32,
     ) -> Self {
+        // RUST FUNDAMENTAL: Intermediate locals like these keep complex numeric code understandable and debuggable.
         let mut rect_x = x + margin.left.to_px();
         let rect_y = y + margin.top;
         let available_rect_width = (available_width - margin.horizontal()).max(0.0);
@@ -276,6 +294,7 @@ impl LayoutBox {
         let content_width = clamp_content_width(&styles, default_content_width, default_content_width);
 
         if let (MarginValue::Auto, MarginValue::Auto) = (margin.left, margin.right) {
+            // RUST FUNDAMENTAL: Destructuring two values into one tuple pattern is a neat way to check multiple cases at once.
             let total_box_width = content_width + padding.horizontal() + border.horizontal();
             let free_space = (available_width - total_box_width).max(0.0);
             rect_x = x + free_space / 2.0;
@@ -293,12 +312,15 @@ impl LayoutBox {
         let mut layout_children = Vec::new();
 
         // Pass 1: Parse children sizes
+        // RUST FUNDAMENTAL: Multi-pass algorithms are common in layout engines because some final values
+        // depend on measurements gathered earlier in the same container.
         let mut total_child_width: f32 = 0.0;
         let mut total_child_height: f32 = 0.0;
         let mut max_child_height: f32 = 0.0;
         let mut max_child_width: f32 = 0.0;
 
         for child in children {
+            // RUST FUNDAMENTAL: Early `continue` keeps loop bodies flatter by skipping non-participating children immediately.
             if child.tag_name() == Some("style".to_string()) || child.tag_name() == Some("script".to_string()) || child.styles().display_mode() == DisplayMode::None {
                 continue;
             }
@@ -312,6 +334,7 @@ impl LayoutBox {
                 // First pass: measure at large width to see what children need
                 if let Some(measured) = Self::from_styled_node(child, 0.0, 0.0, 10000.0) {
                     // Compute intrinsic width from measured layout
+                    // RUST FUNDAMENTAL: `.fold(initial, f32::max)` is a common reduction pattern for finding a maximum value.
                     let intrinsic = if measured.children.is_empty() {
                         measured.rect.width + measured.padding.horizontal() + measured.border.horizontal()
                     } else {
@@ -325,6 +348,8 @@ impl LayoutBox {
                     let final_width = intrinsic.min(content_width);
 
                     // Second pass: re-layout at the correct width
+                    // RUST FUNDAMENTAL: Re-running a pure-ish calculation with better constraints is often simpler
+                    // than trying to mutate the first result into shape.
                     if let Some(layout_child) = Self::from_styled_node(child, 0.0, 0.0, final_width) {
                         let child_w = layout_child.total_width();
                         total_child_width += child_w;
@@ -348,6 +373,7 @@ impl LayoutBox {
         }
 
         let item_count = layout_children.len() as f32;
+        // RUST FUNDAMENTAL: Casting with `as` is explicit in Rust, which makes numeric conversions visible to readers.
         if direction == FlexDirection::Row && item_count > 1.0 && !wraps {
             total_child_width += gap * (item_count - 1.0);
         }
@@ -372,6 +398,7 @@ impl LayoutBox {
 
             for (index, child) in layout_children.iter().enumerate() {
                 let child_width = child.total_width();
+                // RUST FUNDAMENTAL: Temporary proposal variables like this make greedy packing algorithms easier to follow.
                 let proposed = if current_row.is_empty() {
                     child_width
                 } else {
@@ -417,6 +444,7 @@ impl LayoutBox {
                     })
                     .sum();
                 let free_width = (content_width - row_width).max(0.0);
+                // RUST FUNDAMENTAL: Matching into a tuple is a clean way to compute two related outputs at once.
                 let (mut current_x, spacing) = match justify {
                     JustifyContent::FlexEnd => (content_x + free_width, gap),
                     JustifyContent::Center => (content_x + free_width / 2.0, gap),
@@ -432,6 +460,8 @@ impl LayoutBox {
                 };
 
                 for index in row {
+                    // RUST FUNDAMENTAL: Taking `&mut layout_children[*index]` gives exclusive access to the chosen child box
+                    // so its position can be updated in place.
                     let child = &mut layout_children[*index];
                     let new_x = current_x + child.margin.left.to_px();
                     let new_y = match align {
@@ -448,6 +478,7 @@ impl LayoutBox {
 
                     let dx = new_x - child.rect.x;
                     let dy = new_y - child.rect.y;
+                    // RUST FUNDAMENTAL: Representing movement as deltas keeps the offset logic independent of current absolute position.
                     child.offset(dx, dy);
                     current_x += child.total_width() + spacing;
                 }
@@ -491,6 +522,7 @@ impl LayoutBox {
                 current_x += child.total_width() + spacing;
             }
         } else {
+            // RUST FUNDAMENTAL: This final branch handles the column-direction case after the row-specific paths above.
             let free_height = (resolved_content_height - total_child_height).max(0.0);
             let (mut current_y, spacing) = match justify {
                 JustifyContent::FlexEnd => (content_y + free_height, gap),
@@ -533,6 +565,7 @@ impl LayoutBox {
             rect: Rect {
                 x: rect_x,
                 y: rect_y,
+                // RUST FUNDAMENTAL: `.min(...)` and `.max(...)` are common guardrails in layout math to keep derived dimensions sensible.
                 width: (content_width + padding.horizontal() + border.horizontal()).min(available_rect_width),
                 height: border.top + padding.top + resolved_content_height + padding.bottom + border.bottom,
             },
@@ -558,6 +591,8 @@ impl LayoutBox {
         let rect_x = x + margin.left.to_px();
         let rect_y = y + margin.top;
         let available_rect_width = (available_width - margin.horizontal()).max(0.0);
+        // RUST FUNDAMENTAL: Chaining `attribute(...).as_deref().and_then(...)` converts an owned `Option<String>`
+        // into a borrowed optional string slice and then parses it if present.
         let width_hint = node
             .attribute("width").as_deref()
             .and_then(parse_html_length_px)
@@ -603,6 +638,8 @@ impl LayoutBox {
         let mut rect_x = x + margin.left.to_px();
         let rect_y = y + margin.top;
         let available_rect_width = (available_width - margin.horizontal()).max(0.0);
+        // RUST FUNDAMENTAL: Helper functions like `control_label(...)` and `measure_text_width(...)`
+        // keep this constructor focused on layout policy instead of low-level string or text-measurement details.
         let label = control_label(tag_name, node);
         let text_styles = styles.clone();
         let label_width = measure_text_width(&label, &text_styles);
@@ -619,6 +656,8 @@ impl LayoutBox {
         let content_height = clamp_content_height(&styles, default_content_height);
 
         if let (MarginValue::Auto, MarginValue::Auto) = (margin.left, margin.right) {
+            // RUST FUNDAMENTAL: This repeats the same centering rule used for blocks:
+            // when both horizontal margins are `auto`, the remaining space is split evenly.
             let total_box_width = content_width + padding.horizontal() + border.horizontal();
             let free_space = (available_width - total_box_width).max(0.0);
             rect_x = x + free_space / 2.0;
@@ -637,6 +676,8 @@ impl LayoutBox {
             let text_height = line_height_from_styles(&text_styles);
             let content_x = rect.x + border.left + padding.left;
             let content_y = rect.y + border.top + padding.top;
+            // RUST FUNDAMENTAL: Branching on `tag_name` here is layout policy, not parsing.
+            // The same DOM node kind can render differently depending on control semantics.
             let text_x = if tag_name == "button" {
                 content_x + ((content_width - text_width).max(0.0) / 2.0)
             } else {
@@ -708,6 +749,8 @@ impl LayoutBox {
         let mut previous_was_block = false;
         let mut inline_group: Vec<&StyledNode> = Vec::new();
 
+        // RUST FUNDAMENTAL: Closures are anonymous functions that can be stored in local variables and called later.
+        // This one packages the "flush current inline run" behavior so the same logic can be reused in two places.
         let flush_inline_group = |inline_group: &mut Vec<&StyledNode>,
                                   layout_children: &mut Vec<LayoutBox>,
                                   cursor_y: &mut f32,
@@ -735,6 +778,8 @@ impl LayoutBox {
                 .tag_name()
                 .map(|_| child.styles().display_mode() == DisplayMode::Block)
                 .unwrap_or(false);
+            // RUST FUNDAMENTAL: `map(...).unwrap_or(false)` is a compact way to say
+            // "compute something if the optional tag exists, otherwise use false".
 
             if child_is_block {
                 flush_inline_group(
@@ -747,6 +792,8 @@ impl LayoutBox {
                 );
 
                 let child_margin = child.styles().margin();
+                // RUST FUNDAMENTAL: Margin collapsing is modeled as numeric overlap subtraction here.
+                // The engine computes how much vertical space two adjacent margins share.
                 let collapse_overlap = if previous_was_block {
                     previous_block_bottom_margin.min(child_margin.top)
                 } else {
@@ -759,6 +806,7 @@ impl LayoutBox {
                     let alignment = styles.text_align();
                     if alignment != TextAlign::Left {
                         let child_width = layout_child.total_width();
+                        // RUST FUNDAMENTAL: Match expressions are useful even for tiny arithmetic policy choices.
                         let offset = match alignment {
                             TextAlign::Center => (content_width - child_width) / 2.0,
                             TextAlign::Right => content_width - child_width,
@@ -841,6 +889,8 @@ impl LayoutBox {
 
         for child in children {
             if let Some(text) = child.text() {
+                // RUST FUNDAMENTAL: Specialized helper functions keep the main loop focused on control flow
+                // while delegating text wrapping details to a separate routine.
                 let fragments = Self::layout_text_fragments(
                     &text,
                     child.styles().clone(),
@@ -858,6 +908,8 @@ impl LayoutBox {
             let remaining_width = (content_width - (line_x - content_x)).max(TEXT_CHAR_WIDTH);
             if let Some(mut layout_child) = Self::from_styled_node(child, line_x, line_y, remaining_width) {
                 if line_x > content_x && layout_child.total_width() > remaining_width {
+                    // RUST FUNDAMENTAL: This is a line-wrap reflow step:
+                    // if the child does not fit on the current line, advance to the next line and lay it out again.
                     max_line_width = max_line_width.max(line_x - content_x);
                     line_y += line_height.max(TEXT_LINE_HEIGHT);
                     line_x = content_x;
@@ -898,6 +950,7 @@ impl LayoutBox {
                 }
 
                 let row_width: f32 = layout_children[line_start..line_end].iter().map(|b| b.total_width()).sum();
+                // RUST FUNDAMENTAL: Slicing a vector like `line_start..line_end` gives a borrowed window into consecutive items.
                 let offset = match alignment {
                     TextAlign::Center => (content_width - row_width) / 2.0,
                     TextAlign::Right => content_width - row_width,
@@ -938,6 +991,7 @@ impl LayoutBox {
         if children.is_empty() {
             return None;
         }
+        // RUST FUNDAMENTAL: Returning `Option<Self>` here lets callers skip constructing anonymous boxes when there is nothing to wrap.
 
         let mut layout_children = Vec::new();
         let mut line_x = x;
@@ -993,6 +1047,8 @@ impl LayoutBox {
         };
 
         Some(Self {
+            // RUST FUNDAMENTAL: Synthetic nodes like `"anonymous-inline"` are common engine internals.
+            // They let the layout tree represent structure that did not exist explicitly in the source DOM.
             kind: LayoutKind::Block { tag_name: "anonymous-inline".to_string() },
             rect: Rect { x, y, width: content_used_width, height: total_content_height },
             styles: StyleMap::default(),
@@ -1007,6 +1063,7 @@ impl LayoutBox {
         let line_height = line_height_from_styles(&styles);
 
         Self {
+            // RUST FUNDAMENTAL: Owned `String` storage in the layout tree decouples text boxes from the original DOM borrow lifetime.
             kind: LayoutKind::Text { text: text.to_string() },
             rect: Rect {
                 x,
@@ -1023,6 +1080,7 @@ impl LayoutBox {
     }
 
     fn decode_entities(text: &str) -> String {
+        // RUST FUNDAMENTAL: Like the HTML parser's helper, this favors a simple chain of transformations over maximal efficiency.
         text.replace("&quot;", "\"")
             .replace("&amp;", "&")
             .replace("&lt;", "<")
@@ -1050,6 +1108,7 @@ impl LayoutBox {
         let mut fragments = Vec::new();
         let text = Self::decode_entities(text);
 
+        // RUST FUNDAMENTAL: Splitting into owned `String` words gives the wrapper freedom to move and combine fragments as needed.
         let words = text.split_whitespace().map(str::to_string).collect::<Vec<_>>();
 
         if words.is_empty() {
@@ -1072,6 +1131,8 @@ impl LayoutBox {
 
             if !current_line.is_empty() && candidate_width > remaining_width {
                 if !current_line.is_empty() {
+                    // RUST FUNDAMENTAL: Cloning `styles` per fragment is acceptable here because `StyleMap` is relatively small
+                    // and it keeps each laid-out text fragment self-contained.
                     let fragment = Self::layout_text(&current_line, styles.clone(), *line_x, *line_y);
                     *line_x += fragment.rect.width;
                     *max_line_width = max_line_width.max(*line_x - x);
@@ -1105,6 +1166,7 @@ impl LayoutBox {
     }
 
     fn fmt_with_indent(&self, f: &mut Formatter<'_>, depth: usize) -> fmt::Result {
+        // RUST FUNDAMENTAL: Pretty-printers often mirror tree structure by using indentation depth as recursive state.
         let indent = "  ".repeat(depth);
         match &self.kind {
             LayoutKind::Viewport => {
@@ -1170,10 +1232,13 @@ impl LayoutBox {
     }
 
     pub fn rect(&self) -> Rect {
+        // RUST FUNDAMENTAL: Returning `Rect` by value is cheap because `Rect` implements `Copy`.
         self.rect
     }
 
     pub fn total_width(&self) -> f32 {
+        // RUST FUNDAMENTAL: Helper accessors like this capture layout-specific definitions,
+        // so callers do not duplicate the same geometry formula everywhere.
         self.margin.left.to_px() + self.rect.width + self.margin.right.to_px()
     }
 
@@ -1191,6 +1256,7 @@ impl LayoutBox {
         Rect {
             x: self.rect.x + self.border.left + self.padding.left,
             y: self.rect.y + self.border.top + self.padding.top,
+            // RUST FUNDAMENTAL: `.max(0.0)` protects against negative sizes when borders or padding exceed the outer box dimensions.
             width: (self.rect.width - self.border.horizontal() - self.padding.horizontal()).max(0.0),
             height: (self.rect.height - self.border.vertical() - self.padding.vertical()).max(0.0),
         }
@@ -1214,6 +1280,7 @@ impl LayoutBox {
     }
 
     pub fn tag_name(&self) -> Option<&str> {
+        // RUST FUNDAMENTAL: Returning `Option<&str>` borrows the tag name from inside the enum instead of cloning a new `String`.
         match &self.kind {
             LayoutKind::Block { tag_name } | LayoutKind::Inline { tag_name } | LayoutKind::Control { tag_name } => Some(tag_name),
             LayoutKind::Image { .. } => Some("img"),
@@ -1255,6 +1322,8 @@ impl LayoutBox {
     }
 
     pub fn offset(&mut self, dx: f32, dy: f32) {
+        // RUST FUNDAMENTAL: Recursive in-place mutation like this is a natural fit for tree structures when a parent movement
+        // should shift every descendant by the same delta.
         self.rect.x += dx;
         self.rect.y += dy;
         for child in &mut self.children {
@@ -1264,6 +1333,7 @@ impl LayoutBox {
 }
 
 fn font_size_from_styles(styles: &StyleMap) -> f32 {
+    // RUST FUNDAMENTAL: Chaining fallbacks with `.or_else(...)` lets the code try progressively less precise sources.
     styles
         .font_size_resolved(16.0, 16.0)
         .or_else(|| styles.font_size_px())
@@ -1277,11 +1347,13 @@ fn measure_text_width(text: &str, styles: &StyleMap) -> f32 {
 
 fn line_height_from_styles(styles: &StyleMap) -> f32 {
     let fs = font_size_from_styles(styles);
+    // RUST FUNDAMENTAL: Multiplying by `1.2` here encodes a conventional default line-height when CSS did not specify one.
     styles.line_height_px()
         .unwrap_or(fs * 1.2)
 }
 
 fn control_label(tag_name: &str, node: &StyledNode) -> String {
+    // RUST FUNDAMENTAL: Matching on string literals is perfectly normal when a small closed set of tag names drives behavior.
     match tag_name {
         "input" => node
             .attribute("value")
@@ -1305,6 +1377,7 @@ fn collect_text_content(node: &StyledNode) -> String {
         return text;
     }
 
+    // RUST FUNDAMENTAL: This helper recursively flattens text from a subtree into one owned `String`.
     let mut combined = String::new();
     for child in node.children() {
         let part = collect_text_content(child);
@@ -1321,12 +1394,14 @@ fn collect_text_content(node: &StyledNode) -> String {
 
 impl Display for LayoutTree {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // RUST FUNDAMENTAL: The wrapper type's `Display` impl delegates to the root node, which centralizes the actual formatting logic.
         self.root.fmt_with_indent(f, 0)
     }
 }
 
 impl Display for Rect {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // RUST FUNDAMENTAL: Format specifiers like `{:.0}` round the floating-point value for display without changing the stored value.
         write!(
             f,
             "[x: {:.0}, y: {:.0}, w: {:.0}, h: {:.0}]",
@@ -1339,12 +1414,14 @@ fn format_styles(styles: &StyleMap) -> String {
     if styles.is_empty() {
         "{}".to_string()
     } else {
+        // RUST FUNDAMENTAL: `format!("{styles}")` uses the `Display` implementation of `StyleMap` to produce an owned string.
         format!("{styles}")
     }
 }
 
 fn clamp_content_width(styles: &StyleMap, candidate_width: f32, available_width: f32) -> f32 {
     // Resolve width with support for %, rem, em
+    // RUST FUNDAMENTAL: This helper centralizes CSS width constraints so callers can work with one consistent "content box width" rule.
     let font_size = styles.font_size_resolved(16.0, 16.0).or_else(|| styles.font_size_px()).unwrap_or(16.0);
     let mut width = styles.width_resolved(available_width, font_size, 16.0, 1200.0)
         .or_else(|| styles.width_px())
@@ -1376,6 +1453,8 @@ fn clamp_content_width(styles: &StyleMap, candidate_width: f32, available_width:
 }
 
 fn clamp_content_height(styles: &StyleMap, candidate_height: f32) -> f32 {
+    // RUST FUNDAMENTAL: Width and height clamping are kept separate because they use different context and CSS properties,
+    // even though the overall pattern is similar.
     let mut height = styles.height_px().unwrap_or(candidate_height);
     if styles.box_sizing() == BoxSizing::BorderBox {
         let border = styles.border_width();
@@ -1404,6 +1483,8 @@ fn clamp_content_height(styles: &StyleMap, candidate_height: f32) -> f32 {
 }
 
 fn parse_html_length_px(value: &str) -> Option<f32> {
+    // RUST FUNDAMENTAL: `unwrap_or(value)` on the stripped suffix means plain numeric HTML attributes like `width="120"`
+    // are accepted alongside explicit `px` suffixed values.
     value
         .strip_suffix("px")
         .unwrap_or(value)

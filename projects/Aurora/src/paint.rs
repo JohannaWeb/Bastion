@@ -1,9 +1,11 @@
 // Import layout types for rendering
+// RUST FUNDAMENTAL: This ASCII/debug painter works with layout output, so it can ignore parsing and CSS details.
 use crate::layout::{LayoutBox, LayoutTree, Rect};
 // Import Display formatting
 use std::fmt::{self, Display, Formatter};
 
 // Character cell dimensions in pixels for ASCII rendering
+// RUST FUNDAMENTAL: Converting pixels to coarse character cells is what lets this renderer print a readable terminal approximation.
 const CELL_WIDTH_PX: f32 = 6.0;
 const CELL_HEIGHT_PX: f32 = 10.0;
 
@@ -34,6 +36,7 @@ impl Painter {
         // Calculate grid dimensions from pixels
         let width = (rect.width / CELL_WIDTH_PX).ceil().max(1.0) as usize;
         let height = (rect.height / CELL_HEIGHT_PX).ceil().max(1.0) as usize;
+        // RUST FUNDAMENTAL: `.ceil().max(1.0)` ensures even tiny layouts still produce at least a 1x1 framebuffer.
         // Create empty framebuffer
         let mut framebuffer = FrameBuffer::new(width, height);
 
@@ -76,6 +79,7 @@ impl FrameBuffer {
 
     // Fill rectangle region with a character
     fn fill_rect(&mut self, rect: Rect, value: char) {
+        // RUST FUNDAMENTAL: `Rect` is passed by value because it is a small copyable geometry type in this codebase.
         // Convert pixel coordinates to cell coordinates
         let x0 = (rect.x / CELL_WIDTH_PX).floor().max(0.0) as usize;
         let y0 = (rect.y / CELL_HEIGHT_PX).floor().max(0.0) as usize;
@@ -102,6 +106,7 @@ impl FrameBuffer {
         if y0 >= self.height {
             return;
         }
+        // RUST FUNDAMENTAL: Early returns keep the main drawing path flat instead of wrapping the whole function in `if`.
 
         // Draw each character across the row
         // RUST FUNDAMENTAL: .enumerate() provides (index, char) tuples
@@ -128,6 +133,7 @@ impl FrameBuffer {
         // Handle fractional coordinates (round up if partial cell)
         let x1 = if x1_f.fract() > 0.0 { x1_f.ceil() as usize } else { x1_f as usize }.saturating_sub(1).max(x0);
         let y1 = if y1_f.fract() > 0.0 { y1_f.ceil() as usize } else { y1_f as usize }.saturating_sub(1).max(y0);
+        // RUST FUNDAMENTAL: `saturating_sub(1)` avoids underflow if the right or bottom edge would otherwise compute to zero.
 
         // Skip if box is completely off-screen or invalid
         if x0 >= self.width || y0 >= self.height || x1 < x0 || y1 < y0 {
@@ -195,6 +201,7 @@ impl Display for FrameBuffer {
             let line = row.iter().collect::<String>();
             // Write line, trimming trailing spaces
             writeln!(f, "{}", line.trim_end_matches(' '))?;
+            // RUST FUNDAMENTAL: The `?` operator works with `fmt::Result` too, returning early if writing to the formatter fails.
         }
         // Return ok result
         Ok(())
@@ -203,6 +210,7 @@ impl Display for FrameBuffer {
 
 #[derive(Debug, Clone)]
 struct BoxInfo {
+    // RUST FUNDAMENTAL: Small helper structs are a clean way to carry related debug data instead of juggling parallel vectors.
     label: String,
     depth: usize,
     rect: Rect,
@@ -223,6 +231,7 @@ impl Display for DebugFrame {
         writeln!(f, "Boxes:")?;
 
         for box_info in &self.boxes {
+            // RUST FUNDAMENTAL: Repeating a string is often simpler than manually building indentation in a loop.
             let indent = "  ".repeat(box_info.depth);
             write!(
                 f,
@@ -250,6 +259,7 @@ impl DebugPainter {
         let height = (rect.height / CELL_HEIGHT_PX).ceil().max(1.0) as usize;
         let mut framebuffer = FrameBuffer::new(width, height);
         let mut boxes = Vec::new();
+        // RUST FUNDAMENTAL: Type inference sees `Vec<BoxInfo>` from the later `debug_box` call, so no explicit generic is needed here.
 
         debug_box(root, &mut framebuffer, &mut boxes, 0);
 
@@ -264,6 +274,7 @@ fn debug_box(
     depth: usize,
 ) {
     let rect = layout_box.rect();
+    // RUST FUNDAMENTAL: This function accumulates both a visual outline and a sidecar metadata list for debugging.
 
     // Determine label and outline character based on box type
     let (label, corner, horizontal, vertical) = if layout_box.is_viewport() {
@@ -287,6 +298,7 @@ fn debug_box(
 
     // For block/inline, draw outline; for text, skip; skip for anonymous inline boxes
     if !layout_box.text().is_some() && layout_box.tag_name() != Some("anonymous-inline") {
+        // RUST FUNDAMENTAL: `!option.is_some()` works, though `option.is_none()` is the more direct equivalent.
         framebuffer.draw_outline(rect, corner, horizontal, vertical);
 
         if layout_box.tag_name() == Some("li") {
@@ -315,6 +327,7 @@ fn debug_box(
                 "vp".to_string()
             };
             if !label_short.is_empty() {
+                // RUST FUNDAMENTAL: `String` dereferences to `str`, so `&label_short` can be passed where `&str` is expected.
                 framebuffer.draw_label_at_cell(cell_x, cell_y, &label_short);
             }
         }
@@ -345,6 +358,7 @@ fn paint_box(layout_box: &LayoutBox, framebuffer: &mut FrameBuffer) {
     } else if layout_box.is_image() {
         paint_image(layout_box, framebuffer);
     } else if let Some(text) = layout_box.text() {
+        // RUST FUNDAMENTAL: The ASCII renderer treats text boxes as terminal characters instead of geometric glyph shapes.
         framebuffer.draw_text(layout_box.rect(), text);
 
         // Draw underline if text-decoration is set
@@ -367,6 +381,7 @@ fn paint_box(layout_box: &LayoutBox, framebuffer: &mut FrameBuffer) {
     }
 
     for child in layout_box.children() {
+        // RUST FUNDAMENTAL: Rendering order follows tree order, so later siblings can overwrite earlier cells in the framebuffer.
         paint_box(child, framebuffer);
     }
 }
@@ -377,6 +392,7 @@ fn paint_surface(layout_box: &LayoutBox, tag_name: &str, framebuffer: &mut Frame
     let border_width = styles.border_width();
     let background_char = background_fill_char(tag_name, styles.background_color(), styles.get("color"));
     let border_char = border_fill_char(tag_name, styles.border_color(), styles.get("color"));
+    // RUST FUNDAMENTAL: Helper functions return chars rather than strings because each terminal cell stores exactly one character.
 
     if background_char != ' ' {
         framebuffer.fill_rect(rect, background_char);
@@ -429,8 +445,10 @@ fn paint_input(layout_box: &LayoutBox, tag_name: &str, framebuffer: &mut FrameBu
     } else {
         layout_box.styles().get("placeholder").or_else(|| layout_box.styles().get("value")).unwrap_or("...")
     };
+    // RUST FUNDAMENTAL: `or_else(...)` defers the second lookup until the placeholder is missing.
 
     let display_label = format!("[ {} ]", truncate_label(label, 16));
+    // RUST FUNDAMENTAL: `format!` builds an owned `String`, unlike `println!` which writes output directly.
     framebuffer.draw_outline(rect, '[', '-', ']');
     let cell_x = (rect.x / CELL_WIDTH_PX).ceil().max(0.0) as usize;
     let cell_y = ((rect.y + rect.height / 2.0) / CELL_HEIGHT_PX).floor().max(0.0) as usize;
@@ -439,6 +457,7 @@ fn paint_input(layout_box: &LayoutBox, tag_name: &str, framebuffer: &mut FrameBu
 
 fn paint_image(layout_box: &LayoutBox, framebuffer: &mut FrameBuffer) {
     let rect = layout_box.rect();
+    // RUST FUNDAMENTAL: This ASCII path uses symbolic placeholder characters because the terminal renderer has no pixel image support.
     framebuffer.fill_rect(rect, 'c');
     framebuffer.draw_outline(rect, '@', '=', '!');
 
@@ -454,6 +473,7 @@ fn paint_image(layout_box: &LayoutBox, framebuffer: &mut FrameBuffer) {
 
 fn truncate_label(value: &str, max_chars: usize) -> String {
     let mut result = String::new();
+    // RUST FUNDAMENTAL: Iterating over `.chars()` respects Unicode scalar values instead of slicing bytes directly.
     for ch in value.chars().take(max_chars) {
         result.push(ch);
     }
@@ -465,6 +485,7 @@ fn truncate_label(value: &str, max_chars: usize) -> String {
 
 fn box_fill_char(tag_name: &str, color: Option<&str>) -> char {
     if let Some(color) = color {
+        // RUST FUNDAMENTAL: `.next()` returns an `Option<char>` because the string might be empty.
         return color.chars().next().unwrap_or(tag_name.chars().next().unwrap_or('#'));
     }
 
@@ -482,6 +503,7 @@ fn box_fill_char(tag_name: &str, color: Option<&str>) -> char {
 fn background_fill_char(tag_name: &str, background_color: Option<&str>, color: Option<&str>) -> char {
     if let Some(bg) = background_color {
         let bg_lower = bg.to_lowercase();
+        // RUST FUNDAMENTAL: Lowercasing once avoids repeating case-insensitive comparisons against several spellings.
         if bg_lower == "white" || bg_lower == "#fff" || bg_lower == "#ffffff" || bg_lower == "transparent" {
             return ' ';
         }
@@ -498,6 +520,7 @@ fn border_fill_char(tag_name: &str, border_color: Option<&str>, color: Option<&s
             .next()
             .map(|ch| ch.to_ascii_uppercase())
             .unwrap_or('*');
+        // RUST FUNDAMENTAL: `.map(...)` transforms the `Some` case while leaving `None` untouched.
     }
 
     box_fill_char(tag_name, color).to_ascii_uppercase()

@@ -1,138 +1,149 @@
 // Import DOM node types
+// RUST FUNDAMENTAL: Importing `Node` here lets the parser build DOM values without spelling the full module path every time.
 use crate::dom::Node;
 // Import BTreeMap for storing attributes in sorted order
 use std::collections::BTreeMap;
 
 // Enum representing different token types found in HTML
-// RUST FUNDAMENTAL: Enums without associated data are memory-efficient; compiler optimizes discriminant
+// RUST FUNDAMENTAL: A Rust enum is one type that can represent several different shapes of data.
+// Each value stores both the active variant and that variant's payload, so `Token` can be a tag token or a text token
+// without needing inheritance or separate parallel types.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Token {
     // Opening tag with tag name and attributes
-    // RUST FUNDAMENTAL: Tuple variant Token::OpenTag(TagToken) wraps another struct
-    // Match with: Token::OpenTag(tag) to destructure the TagToken
+    // RUST FUNDAMENTAL: This tuple variant stores one `TagToken` value inside the enum.
+    // Pattern matching lets us extract that payload with syntax like `Token::OpenTag(tag)`.
     OpenTag(TagToken),
 
     // Closing tag with tag name
-    // RUST FUNDAMENTAL: Unit variant with associated data - variant can hold owned String
+    // RUST FUNDAMENTAL: This variant stores an owned `String`, so the token fully owns the closing tag name.
+    // That avoids borrowing from the original HTML source and keeps the token stream self-contained.
     CloseTag(String),
 
     // Text content between tags
-    // RUST FUNDAMENTAL: String ownership - each token owns its text data
-    // No references/borrowing here to avoid lifetime complications with token ownership
+    // RUST FUNDAMENTAL: Because this is an owned `String`, the token owns its text bytes outright.
+    // That makes the token stream simpler to keep around, because it does not borrow pieces of the original input.
     Text(String),
 }
 
 // Struct holding data about an opening tag
+// RUST FUNDAMENTAL: Small private structs like this are often used as parser-internal helper representations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TagToken {
     // Name of the tag (e.g., "div", "p")
     tag_name: String,
 
     // Map of attribute names to their values
-    // RUST FUNDAMENTAL: BTreeMap is preferred for attributes because:
-    // 1. Ordered iteration (deterministic); 2. CSS selectors may iterate ordered
+    // RUST FUNDAMENTAL: `BTreeMap` stores entries ordered by key, so iterating attributes is deterministic.
+    // That can make printing, debugging, and test output much easier to reason about than a hash-based map.
     attributes: BTreeMap<String, String>,
 }
 
 // Parser struct for converting HTML strings to DOM
-// RUST FUNDAMENTAL: Generic lifetime parameter 'a - reference lives as long as source HTML
-// Parser<'a> means: "I hold a reference borrowed for lifetime 'a"
+// RUST FUNDAMENTAL: The lifetime parameter `'a` says this parser borrows some input string for as long as the parser exists.
+// `Parser<'a>` therefore means "a parser that is tied to data guaranteed to stay alive for lifetime `'a`".
 pub struct Parser<'a> {
     // Pre-tokenized HTML as vector of tokens
-    // RUST FUNDAMENTAL: Vec<Token> is heap-allocated; owns all tokens (not borrowed)
-    // Tokenization happens upfront before parsing
+    // RUST FUNDAMENTAL: `Vec<Token>` is an owning, growable collection stored on the heap.
+    // The parser owns these tokens outright, which means parsing works over pre-built data instead of borrowing from a tokenizer on the fly.
     tokens: Vec<Token>,
 
     // Current position in token stream
-    // RUST FUNDAMENTAL: usize is machine-word integer; used for indexing (overflow panics in debug)
+    // RUST FUNDAMENTAL: `usize` is Rust's pointer-sized unsigned integer type.
+    // It is the standard choice for indexing slices and vectors because it matches the platform's address size.
     position: usize,
 
     // Reference to original HTML source (kept but not used)
-    // RUST FUNDAMENTAL: &'a str is borrowed string slice - doesn't own data
-    // Lifetime 'a ensures reference outlives Parser; Parser can't outlive source
+    // RUST FUNDAMENTAL: `&'a str` is a borrowed string slice.
+    // It does not own text data itself; it is only a view into bytes owned somewhere else.
+    // The `'a` lifetime ties that borrow to the parser so Rust can prove the parser never outlives its source.
     // #[allow(dead_code)] suppresses warning for intentionally unused field (kept for potential future use)
     #[allow(dead_code)]
     source: &'a str,
 }
 
 // Implementation of Parser methods
-// RUST FUNDAMENTAL: impl<'a> Parser<'a> means: implement for Parser with any lifetime 'a
-// Generic lifetime parameters work like generic types but track reference lifetimes
+// RUST FUNDAMENTAL: `impl<'a> Parser<'a>` means "define methods for `Parser` for any valid lifetime `'a`".
+// Lifetimes are a kind of generic parameter, but instead of describing data shape they describe how long borrows are valid.
 impl<'a> Parser<'a> {
     // Create a new parser from HTML source string
-    // RUST FUNDAMENTAL: pub fn new(source: &'a str) takes reference with lifetime 'a
-    // 'a is tied to Parser lifetime - Parser can't outlive source
+    // RUST FUNDAMENTAL: The constructor accepts a borrowed string and stores that borrow in the parser.
+    // Because both use the same `'a`, the compiler guarantees the parser cannot outlive the input string.
     pub fn new(source: &'a str) -> Self {
         // Tokenize HTML string and create parser state
         Self {
             // Pre-tokenize HTML into token stream
-            // RUST FUNDAMENTAL: tokenize() takes &str (borrowed), returns Vec<Token> (owned)
-            // Tokenization is eager (happens upfront); alternative would be lazy iterators
+            // RUST FUNDAMENTAL: This is a good example of an API boundary that turns borrowed input into owned output.
+            // `tokenize` reads from `&str`, then returns a `Vec<Token>` that no longer depends on the caller's borrow.
             tokens: tokenize(source),
 
             // Start at beginning of token stream
             position: 0,
 
             // Keep reference to original source
-            // RUST FUNDAMENTAL: source: &'a str ties lifetime 'a to this field
-            // Ensures Parser doesn't outlive source string
+            // RUST FUNDAMENTAL: Storing `source` here is what actually makes the struct carry the borrow.
+            // Because of that field, the borrow checker treats the entire parser as being tied to the source lifetime.
             source,
         }
     }
 
     // Parse entire HTML document into DOM tree
-    // RUST FUNDAMENTAL: &mut self means: need mutable borrow; parse_document modifies self.position
+    // RUST FUNDAMENTAL: `&mut self` means this method needs exclusive access to the parser while it runs.
+    // That is required because parsing advances `self.position`, which mutates parser state.
     pub fn parse_document(&mut self) -> crate::dom::NodePtr {
         // Initialize vector to collect top-level nodes
-        // RUST FUNDAMENTAL: Vec::new() creates empty heap-allocated vector; grows dynamically
+        // RUST FUNDAMENTAL: `Vec::new()` creates an empty growable collection with no elements yet.
+        // As nodes are pushed, the vector may allocate more capacity behind the scenes.
         let mut children = Vec::new();
 
         // Parse nodes until end of token stream
-        // RUST FUNDAMENTAL: while loop with condition; while !self.is_eof() checks if more tokens exist
-        // More concise than traditional for-loop with index management
+        // RUST FUNDAMENTAL: A `while` loop is a good fit when the number of iterations depends on mutable state.
+        // Here the loop continues until parsing reaches the end of the token stream.
         while !self.is_eof() {
             // Try to parse a node at current position
-            // RUST FUNDAMENTAL: if let Some(node) = self.parse_node() unwraps Option in condition
-            // None case is handled by else block; Some(value) is bound to node
+            // RUST FUNDAMENTAL: `if let` is a concise way to say "run this branch only when the value matches a pattern".
+            // It is especially common with `Option` and `Result` when you care about one success case and want a simple fallback.
             if let Some(node) = self.parse_node() {
                 // Add parsed node to children vector
-                // RUST FUNDAMENTAL: .push() adds to end; moves ownership of node into Vec
-                // Vec owns all children nodes
+                // RUST FUNDAMENTAL: `Vec::push` appends to the end and takes ownership of the value you pass in.
+                // After this call, the vector is responsible for storing that node pointer.
                 children.push(node);
             } else {
                 // If no node found, advance position
-                // RUST FUNDAMENTAL: &mut self allows modifying self.position
+                // RUST FUNDAMENTAL: Because the method has `&mut self`, it can safely change internal fields like `position`.
                 self.position += 1;
             }
         }
 
         // Wrap children in document node
-        // RUST FUNDAMENTAL: Function call consumes children Vec; moves into Node::document()
+        // RUST FUNDAMENTAL: Returning the document node here moves the entire `children` vector into `Node::document`.
+        // No deep copy is needed; ownership is simply transferred to the new node.
         Node::document(children)
     }
 
     // Parse a single node (text, element, or closing tag)
-    // RUST FUNDAMENTAL: fn parse_node(&mut self) -> Option<NodePtr> returns Option
-    // Caller uses match/if let to handle Some/None cases
+    // RUST FUNDAMENTAL: `Option<T>` is Rust's standard way to represent "a value might be absent".
+    // Returning `Option<NodePtr>` makes it explicit that parsing at the current position may or may not yield a node.
     fn parse_node(&mut self) -> Option<crate::dom::NodePtr> {
         // Get current token without advancing
-        // RUST FUNDAMENTAL: self.peek()? is try operator - returns None if peek() returns None
-        // Equivalent to match self.peek() { Some(token) => token, None => return None }
+        // RUST FUNDAMENTAL: The `?` operator works on `Option` as well as `Result`.
+        // In an `Option`-returning function, `self.peek()?` means "get the token, or return `None` immediately if there is no token".
         match self.peek()? {
             // If current token is text
-            // RUST FUNDAMENTAL: Pattern match on Token enum variants
-            // Each arm handles different variant; compiler ensures all covered
+            // RUST FUNDAMENTAL: `match` is Rust's primary branching construct for enums.
+            // The compiler checks that every possible variant is handled, which prevents missing cases by accident.
             Token::Text(text) => {
                 // Clone text content
-                // RUST FUNDAMENTAL: .clone() needed because peek() returns &Token (borrowed)
-                // Can't move out of borrowed reference; must clone to get owned String
+                // RUST FUNDAMENTAL: `peek()` gives us a borrowed view of the token, not ownership of it.
+                // Because we cannot move fields out of borrowed data, cloning gives us a new owned `String` to work with.
                 let text = text.clone();
 
                 // Advance to next token
                 self.position += 1;
 
                 // Return text node
-                // RUST FUNDAMENTAL: Some(value) wraps value in Option; Option returned to caller
+                // RUST FUNDAMENTAL: `Some(...)` is the "present value" variant of `Option`.
+                // Wrapping the node in `Some` makes the success case explicit in the type system.
                 Some(Node::text(text))
             }
 
@@ -145,11 +156,12 @@ impl<'a> Parser<'a> {
                 self.position += 1;
 
                 // Check if tag is void (self-closing)
-                // RUST FUNDAMENTAL: Conditional execution of two different branches
-                // Both return Option, satisfying return type
+                // RUST FUNDAMENTAL: An `if` expression in Rust has a value, so both branches must produce compatible types.
+                // In this case both branches evaluate to `Option<NodePtr>`.
                 if is_void_tag(&tag.tag_name) {
                     // Create element without children for void tags
-                    // RUST FUNDAMENTAL: Vec::new() creates empty vector for void element children
+                    // RUST FUNDAMENTAL: Void elements still use the same element constructor,
+                    // but they pass an empty `Vec` because HTML rules say they cannot have child nodes.
                     Some(Node::element_with_attributes(
                         tag.tag_name,
                         tag.attributes,
@@ -157,15 +169,15 @@ impl<'a> Parser<'a> {
                     ))
                 } else {
                     // Parse element with children for normal tags
-                    // RUST FUNDAMENTAL: Recursive call to parse_element
-                    // Allows arbitrary nesting; stack grows with recursion depth
+                    // RUST FUNDAMENTAL: This is recursive descent parsing.
+                    // Each nested element causes another function call, which mirrors the nested structure of the HTML tree.
                     Some(self.parse_element(tag))
                 }
             }
 
             // If current token is closing tag, skip it
-            // RUST FUNDAMENTAL: _ is catch-all pattern; ignores value in CloseTag(String)
-            // Returning None signals no node parsed at this position
+            // RUST FUNDAMENTAL: `_` is the wildcard pattern, meaning "match anything and ignore the value".
+            // Returning `None` here tells the caller that a closing tag does not itself produce a standalone DOM node.
             Token::CloseTag(_) => None,
         }
     }
@@ -173,20 +185,26 @@ impl<'a> Parser<'a> {
     // Parse an element and its children until matching close tag
     fn parse_element(&mut self, tag: TagToken) -> crate::dom::NodePtr {
         // Initialize vector to collect child nodes
+        // RUST FUNDAMENTAL: This vector will accumulate owned child pointers before the final element node is constructed.
         let mut children = Vec::new();
 
         // Parse children until matching close tag or end
+        // RUST FUNDAMENTAL: `while let Some(token) = ...` is a nice parser pattern for "keep going while input remains".
         while let Some(token) = self.peek() {
             // Match token type
             match token {
                 // If matching close tag found, stop parsing children
+                // RUST FUNDAMENTAL: Match guards can compare borrowed values without moving them out of the token.
                 Token::CloseTag(close_tag) if close_tag == &tag.tag_name => {
                     // Advance past close tag
                     self.position += 1;
                     // Exit loop
+                    // RUST FUNDAMENTAL: `break` exits only the nearest loop, not the whole function.
                     break;
                 }
                 // If non-matching close tag, stop parsing (mismatched tags)
+                // RUST FUNDAMENTAL: This parser chooses to stop at an unexpected close tag rather than throwing an error.
+                // That kind of "best effort" recovery is common in HTML parsing.
                 Token::CloseTag(_) => break,
                 // For other tokens, try to parse as child node
                 _ => {
@@ -200,18 +218,22 @@ impl<'a> Parser<'a> {
         }
 
         // Create element with collected children
+        // RUST FUNDAMENTAL: Constructing the final node at the end means the parser can gather all children first
+        // and then move them into the resulting element in one step.
         Node::element_with_attributes(tag.tag_name, tag.attributes, children)
     }
 
     // Peek at current token without consuming it
     fn peek(&self) -> Option<&Token> {
         // Return reference to token at current position
+        // RUST FUNDAMENTAL: `Vec::get` returns `Option<&T>` instead of panicking, which makes out-of-bounds access explicit and safe.
         self.tokens.get(self.position)
     }
 
     // Check if we've reached end of token stream
     fn is_eof(&self) -> bool {
         // True if position is at or past token count
+        // RUST FUNDAMENTAL: Comparing indexes against `.len()` is the standard way to implement end-of-input checks for slices and vectors.
         self.position >= self.tokens.len()
     }
 }
@@ -219,46 +241,60 @@ impl<'a> Parser<'a> {
 // Convert HTML source string into token stream
 fn tokenize(source: &str) -> Vec<Token> {
     // Initialize result token vector
+    // RUST FUNDAMENTAL: Tokenization is often modeled as "read input, emit a sequence of simpler units" before parsing starts.
     let mut tokens = Vec::new();
     // Initialize text accumulation buffer
+    // RUST FUNDAMENTAL: Mutable `String` buffers are useful when building text incrementally one character or chunk at a time.
     let mut text_buffer = String::new();
     // Current byte offset in source
+    // RUST FUNDAMENTAL: String indexing in Rust is byte-based, not character-based, because UTF-8 characters have variable width.
     let mut index = 0;
 
     // Process source string character by character
     while index < source.len() {
         // Get substring from current position to end
+        // RUST FUNDAMENTAL: Slicing a `str` like this produces another borrowed `&str` view into the same underlying bytes.
         let rest = &source[index..];
         // Get next character, break if none
+        // RUST FUNDAMENTAL: `chars().next()` returns an `Option<char>` because the slice may be empty.
+        // `let Some(ch) = ... else { break; }` is a concise early-exit pattern.
         let Some(ch) = rest.chars().next() else {
             break;
         };
 
         // Check if character is tag start
+        // RUST FUNDAMENTAL: Comparing a `char` to a character literal like `'<'` is a direct scalar comparison, not a string comparison.
         if ch == '<' {
             // If text buffer has content, emit it as text token
             if !text_buffer.is_empty() {
                 // Collapse consecutive whitespace
+                // RUST FUNDAMENTAL: Borrowing `&text_buffer` avoids cloning the accumulated text just to normalize it.
                 let collapsed = collapse_whitespace(&text_buffer);
                 // Only emit if non-whitespace content
+                // RUST FUNDAMENTAL: `.trim()` returns a borrowed slice with leading and trailing whitespace removed.
                 if !collapsed.trim().is_empty() {
                     // Decode HTML entities and create text token
                     tokens.push(Token::Text(decode_entities(&collapsed)));
                 }
             }
             // Clear text buffer for next segment
+            // RUST FUNDAMENTAL: `.clear()` empties the existing `String` without dropping the buffer allocation, so it can be reused.
             text_buffer.clear();
 
             // Find end of tag (next '>'), skip if not found
+            // RUST FUNDAMENTAL: `let Some(x) = ... else { ... }` is useful when the failure case should immediately handle recovery.
             let Some(tag_end_offset) = find_tag_end(rest) else {
                 // Not a tag, treat '<' as text
+                // RUST FUNDAMENTAL: `String::push` appends a single `char`, which is different from `push_str` for `&str`.
                 text_buffer.push(ch);
                 // Advance by character width (UTF-8 safe)
+                // RUST FUNDAMENTAL: `char::len_utf8()` returns how many bytes this Unicode scalar occupies in UTF-8.
                 index += ch.len_utf8();
                 continue;
             };
 
             // Skip DOCTYPE declarations (not needed for DOM)
+            // RUST FUNDAMENTAL: `starts_with` checks a borrowed string prefix without allocating a new string.
             if rest.starts_with("<!DOCTYPE") || rest.starts_with("<!doctype") {
                 // Skip entire DOCTYPE tag
                 index += tag_end_offset + 1;
@@ -268,24 +304,30 @@ fn tokenize(source: &str) -> Vec<Token> {
             // Skip HTML comments
             if rest.starts_with("<!--") {
                 // Find comment end marker
+                // RUST FUNDAMENTAL: `str::find` returns an `Option<usize>` byte offset when a substring is found.
                 if let Some(comment_end) = rest.find("-->") {
                     // Skip past comment end
                     index += comment_end + 3;
                 } else {
                     // Unterminated comment, skip to end
+                    // RUST FUNDAMENTAL: This parser takes a recovery approach here rather than erroring out.
                     index += 4;
                 }
                 continue;
             }
 
             // Extract tag content between < and >
+            // RUST FUNDAMENTAL: String slicing must happen on valid UTF-8 boundaries.
+            // Here the bounds come from previously scanned positions, so the slice is safe.
             let tag = rest[1..tag_end_offset].trim();
             // Advance past closing >
             index += tag_end_offset + 1;
 
             // Check if tag is closing tag (starts with /)
+            // RUST FUNDAMENTAL: `strip_prefix` returns `Some(remainder)` if the prefix exists, otherwise `None`.
             if let Some(stripped) = tag.strip_prefix('/') {
                 // Create close tag token with tag name
+                // RUST FUNDAMENTAL: `.trim()` borrows a cleaned-up view; `.to_string()` then allocates owned storage for the token.
                 tokens.push(Token::CloseTag(stripped.trim().to_string()));
             } else if !tag.is_empty() {
                 // Parse opening tag into tag name and attributes
@@ -300,10 +342,12 @@ fn tokenize(source: &str) -> Vec<Token> {
                 // Special handling for raw text tags
                 if raw_text_tag {
                     // Build closing tag string to search for
+                    // RUST FUNDAMENTAL: `format!` can interpolate local variables directly by name into a new `String`.
                     let close_tag = format!("</{tag_name}>");
                     // Find position of closing tag
                     if let Some(close_offset) = source[index..].find(&close_tag) {
                         // Extract raw text between tags
+                        // RUST FUNDAMENTAL: Borrowed slicing plus a decode step lets the parser avoid copying more than needed.
                         let raw_text = decode_entities(&source[index..index + close_offset]);
                         // Emit non-empty text tokens
                         if !raw_text.trim().is_empty() {
@@ -320,6 +364,7 @@ fn tokenize(source: &str) -> Vec<Token> {
                             tokens.push(Token::Text(raw_text.trim().to_string()));
                         }
                         // Stop processing (reached end of file)
+                        // RUST FUNDAMENTAL: `break` here exits the outer tokenization loop entirely.
                         break;
                     }
                 }
@@ -333,6 +378,7 @@ fn tokenize(source: &str) -> Vec<Token> {
     }
 
     // Emit any remaining text in buffer
+    // RUST FUNDAMENTAL: Parsers often do one final flush after the main loop to emit any buffered data that did not end with a delimiter.
     if !text_buffer.is_empty() {
         // Collapse consecutive whitespace
         let collapsed = collapse_whitespace(&text_buffer);
@@ -344,6 +390,7 @@ fn tokenize(source: &str) -> Vec<Token> {
     }
 
     // Return token stream
+    // RUST FUNDAMENTAL: Returning the vector moves ownership out of the function with no element-by-element copy.
     tokens
 }
 
@@ -352,11 +399,14 @@ fn collapse_whitespace(input: &str) -> String {
     // Initialize result string
     let mut result = String::new();
     // Track if previous character was whitespace
+    // RUST FUNDAMENTAL: A simple state variable like this is a common way to write one-pass text normalization logic.
     let mut last_was_whitespace = false;
 
     // Iterate through each character in input
+    // RUST FUNDAMENTAL: `input.chars()` iterates Unicode scalar values, not raw bytes.
     for ch in input.chars() {
         // Check if character is whitespace
+        // RUST FUNDAMENTAL: Character classification helpers like `is_whitespace()` are methods on `char`.
         if ch.is_whitespace() {
             // Only emit space if previous wasn't whitespace
             if !last_was_whitespace {
@@ -379,6 +429,7 @@ fn collapse_whitespace(input: &str) -> String {
 // Replace common HTML entities with their Unicode equivalents
 fn decode_entities(input: &str) -> String {
     // Apply chain of replace operations for common entities
+    // RUST FUNDAMENTAL: Each `.replace(...)` produces a new `String`, so this is simple and readable but not the most allocation-efficient strategy.
     input
         // Non-breaking space to regular space
         .replace("&nbsp;", " ")
@@ -411,6 +462,7 @@ fn decode_entities(input: &str) -> String {
 // Parse an opening tag into tag name and attributes
 fn parse_open_tag(source: &str) -> TagToken {
     // Remove trailing slash and whitespace, convert to chars
+    // RUST FUNDAMENTAL: `.peekable()` wraps an iterator so you can inspect the next item without consuming it.
     let mut chars = source.trim_end_matches('/').trim_end().chars().peekable();
     // Initialize tag name buffer
     let mut tag_name = String::new();
@@ -422,6 +474,7 @@ fn parse_open_tag(source: &str) -> TagToken {
             break;
         }
         // Append character to tag name
+        // RUST FUNDAMENTAL: `peek()` yields a reference to the next character, so `*ch` dereferences it back to `char`.
         tag_name.push(*ch);
         // Move to next character
         chars.next();
@@ -434,6 +487,7 @@ fn parse_open_tag(source: &str) -> TagToken {
     }
 
     // Collect remaining characters into string
+    // RUST FUNDAMENTAL: `.collect::<String>()` gathers iterator items into an owned string because `String` implements `FromIterator<char>`.
     let rest = chars.collect::<String>();
     // Create tag token with name and parsed attributes
     TagToken {
@@ -446,6 +500,7 @@ fn parse_open_tag(source: &str) -> TagToken {
 // Check if tag should be parsed as raw text (no nested tags)
 fn is_raw_text_tag(tag_name: &str) -> bool {
     // Match script and style tags that preserve content literally
+    // RUST FUNDAMENTAL: `matches!` works well for tiny predicate helpers like this because it keeps the logic expression-sized.
     matches!(tag_name, "script" | "style")
 }
 
@@ -458,10 +513,13 @@ fn is_void_tag(tag_name: &str) -> bool {
 // Find the position of '>' that closes a tag (respecting quotes)
 fn find_tag_end(source: &str) -> Option<usize> {
     // Convert source to vector of chars for indexing
+    // RUST FUNDAMENTAL: Collecting into `Vec<char>` makes per-character indexing easy, at the cost of an extra allocation.
     let chars: Vec<char> = source.chars().collect();
     // Current position in character vector
     let mut i = 0;
     // Track if we're inside quoted string and which quote type
+    // RUST FUNDAMENTAL: `Option<char>` is a compact way to model parser state: either we are outside quotes (`None`)
+    // or we are inside a quote delimited by a specific character (`Some('"')` or `Some('\'')`).
     let mut quote_char: Option<char> = None;
 
     // Loop through all characters
@@ -477,6 +535,7 @@ fn find_tag_end(source: &str) -> Option<usize> {
             // Found matching single quote, end quoted section
             ('\'', Some('\'')) => quote_char = None,
             // Found '>' while not in quoted section, return position
+            // RUST FUNDAMENTAL: Returning `Some(i)` immediately exits the function with success.
             ('>', None) => return Some(i),
             // All other characters, do nothing
             _ => {}
@@ -494,6 +553,7 @@ fn parse_attributes(source: &str) -> BTreeMap<String, String> {
     // Initialize result map for attributes
     let mut attributes = BTreeMap::new();
     // Convert source string to character vector
+    // RUST FUNDAMENTAL: Like `find_tag_end`, this helper chooses indexed character access over a streaming iterator for simpler parsing logic.
     let chars = source.chars().collect::<Vec<_>>();
     // Current position in character vector
     let mut index = 0;
@@ -518,12 +578,14 @@ fn parse_attributes(source: &str) -> BTreeMap<String, String> {
         }
 
         // Skip if we didn't read any name characters (shouldn't happen)
+        // RUST FUNDAMENTAL: Defensive parser checks like this help avoid getting stuck in infinite loops on malformed input.
         if start == index {
             index += 1;
             continue;
         }
 
         // Extract attribute name from characters
+        // RUST FUNDAMENTAL: Slicing the `Vec<char>` and collecting builds a fresh owned `String` for the attribute name.
         let name = chars[start..index].iter().collect::<String>();
 
         // Skip whitespace after attribute name
@@ -576,10 +638,12 @@ fn parse_attributes(source: &str) -> BTreeMap<String, String> {
             }
         } else {
             // No '=' found, this is a boolean attribute
+            // RUST FUNDAMENTAL: HTML boolean attributes like `hidden` or `disabled` are represented here as present keys with empty-string values.
             String::new()
         };
 
         // Store parsed attribute in map
+        // RUST FUNDAMENTAL: Inserting the same key again would replace the old value, because maps keep at most one value per key.
         attributes.insert(name, value);
     }
 
@@ -588,6 +652,7 @@ fn parse_attributes(source: &str) -> BTreeMap<String, String> {
 }
 
 // Test module for HTML parser (only compiled in test builds)
+// RUST FUNDAMENTAL: `#[cfg(test)]` conditionally includes this module only when running tests.
 #[cfg(test)]
 mod tests {
     // Import Parser for testing
@@ -604,11 +669,14 @@ mod tests {
     }
 
     // Test that parser correctly builds DOM tree from nested HTML
+    // RUST FUNDAMENTAL: `#[test]` marks a function for the Rust test harness, which will discover and run it automatically.
     #[test]
     fn parses_nested_html_into_dom_tree() {
+        // RUST FUNDAMENTAL: Tests usually build a small input, run the code under test, and compare against an expected output.
         let mut parser = Parser::new("<html><body><p>Hello</p><p>World</p></body></html>");
         let document = parser.parse_document();
 
+        // RUST FUNDAMENTAL: `assert_eq!` compares values using `PartialEq` and prints both sides on failure.
         assert_eq!(
             document,
             Node::document(vec![element(
@@ -674,6 +742,7 @@ mod tests {
         let mut parser = Parser::new("<div><img src=\"cat.txt\" alt=\"sleepy cat\"><p>caption</p></div>");
         let document = parser.parse_document();
 
+        // RUST FUNDAMENTAL: Test setup often constructs expected maps and structs explicitly so the assertion is precise.
         let mut img_attributes = BTreeMap::new();
         img_attributes.insert("alt".to_string(), "sleepy cat".to_string());
         img_attributes.insert("src".to_string(), "cat.txt".to_string());

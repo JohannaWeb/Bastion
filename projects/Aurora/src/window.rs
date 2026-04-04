@@ -1,8 +1,11 @@
 // Import layout tree for rendering
+// RUST FUNDAMENTAL: This module sits at the boundary between computed layout data and actual OS/window output.
 use crate::layout::LayoutTree;
 // Import GPU painter for Vello rendering
 use crate::gpu_paint::GpuPainter;
 // Import Arc for thread-safe sharing
+// RUST FUNDAMENTAL: GUI/rendering stacks often need shared ownership across async or callback-driven code,
+// which is why `Arc<T>` shows up frequently around GPU and window resources.
 use std::sync::Arc;
 // Import Vello graphics primitives
 use vello::{
@@ -18,6 +21,8 @@ use vello::{
     Renderer, RendererOptions, Scene,
 };
 // Import Winit window event handling
+// RUST FUNDAMENTAL: GUI frameworks often split related types into nested modules, so one `use` block can
+// bring several enums and structs into scope at once.
 use winit::{
     // Import window event types
     event::{ElementState, KeyEvent, WindowEvent},
@@ -32,6 +37,7 @@ use winit::{
 // Open interactive window for rendering layout
 pub fn open(layout: &LayoutTree) -> Result<(), String> {
     // Check environment variable for screenshot output path
+    // RUST FUNDAMENTAL: Environment lookups return `Result<String, VarError>` because the variable may not exist.
     let screenshot_path = std::env::var("AURORA_SCREENSHOT");
     // If screenshot path provided, render to file instead of window
     if let Ok(path) = screenshot_path {
@@ -42,6 +48,8 @@ pub fn open(layout: &LayoutTree) -> Result<(), String> {
     }
 
     // Create new event loop for window events
+    // RUST FUNDAMENTAL: `.map_err(...)` is useful when a lower-level library has its own error type
+    // but this function wants to expose a simpler `String` error.
     let event_loop = EventLoop::new().map_err(|error| format!("failed to create event loop: {error}"))?;
     // Create Aurora application state with layout
     let mut app = AuroraApp::new(layout);
@@ -56,9 +64,14 @@ pub fn open(layout: &LayoutTree) -> Result<(), String> {
 
 fn render_to_file(layout: &LayoutTree, path: &str) {
     use image::{ImageBuffer, Rgba};
+    // RUST FUNDAMENTAL: A nested `use` is scoped to this function, which keeps file-level imports smaller
+    // when a crate is only needed by one helper.
 
     eprintln!("Rendering to PNG: {}", path);
+    // RUST FUNDAMENTAL: `eprintln!` writes to stderr, which is useful for status messages that should not be
+    // mixed into normal stdout output.
 
+    // RUST FUNDAMENTAL: Unsuffixed integer literals are inferred by context; here the explicit `u32` suffix fixes the type directly.
     let width = 1200u32;
     let height = 1024u32;
 
@@ -66,6 +79,7 @@ fn render_to_file(layout: &LayoutTree, path: &str) {
     let mut img = ImageBuffer::new(width, height);
 
     // Fill with white
+    // RUST FUNDAMENTAL: Iterating over `pixels_mut()` yields mutable references to each pixel in the image buffer.
     for pixel in img.pixels_mut() {
         *pixel = Rgba([255, 255, 255, 255]);
     }
@@ -88,6 +102,9 @@ fn render_layout_with_text(
     offset_y: i32,
 ) {
     let root = layout.root();
+    // RUST FUNDAMENTAL: A function-local helper can still access types from the outer module through full paths
+    // like `crate::layout::LayoutBox`.
+    // RUST FUNDAMENTAL: Nested helper functions keep traversal logic local when it is only relevant to one outer function.
     fn walk(
         box_node: &crate::layout::LayoutBox,
         img: &mut image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
@@ -96,10 +113,13 @@ fn render_layout_with_text(
     ) {
         let rect = box_node.rect();
         let styles = box_node.styles();
+        // RUST FUNDAMENTAL: These are immutable borrows, so they can coexist while this frame of recursion reads state.
 
         // Draw background for non-text boxes
         if box_node.text().is_none() && !box_node.is_image() {
+            // RUST FUNDAMENTAL: Chaining `.or_else(...).unwrap_or(...)` is a compact fallback ladder for optional values.
             let bg_color_str = styles.get("background-color").or_else(|| styles.get("background")).unwrap_or("transparent");
+            // RUST FUNDAMENTAL: `unwrap_or(...)` returns the contained `&str` or the default, so the result is no longer an `Option`.
 
             if bg_color_str != "transparent" {
                 let color = parse_screenshot_color(bg_color_str);
@@ -113,6 +133,7 @@ fn render_layout_with_text(
             }
 
             let border = styles.border_width();
+            // RUST FUNDAMENTAL: Storing this in a local avoids recomputing the helper for each edge check.
             if border.top > 0.0 || border.right > 0.0 || border.bottom > 0.0 || border.left > 0.0 {
                 let border_color = parse_screenshot_color(styles.get("border-color").unwrap_or("#dadce0"));
                 draw_border(img,
@@ -148,9 +169,11 @@ fn render_layout_with_text(
 
         // Render text
         if let Some(text) = box_node.text() {
+            // RUST FUNDAMENTAL: `if let Some(text)` both checks the enum variant and introduces `text` as a borrowed `&str`.
             let color_str = styles.get("color").unwrap_or("black");
             let color = parse_screenshot_color(color_str);
             let font_size = styles.font_size_px().filter(|&s| s > 0.0).unwrap_or(16.0);
+            // RUST FUNDAMENTAL: `.filter(...)` on `Option<T>` keeps the value only when it passes the predicate.
 
             render_text_simple(
                 img,
@@ -163,6 +186,7 @@ fn render_layout_with_text(
         }
 
         // Recurse to children
+        // RUST FUNDAMENTAL: Tree traversal is naturally recursive when each node performs work and then delegates the same work to its children.
         for child in box_node.children() {
             walk(child, img, offset_x, offset_y);
         }
@@ -180,6 +204,7 @@ fn draw_border(
     color: image::Rgba<u8>,
 ) {
     let (width, height) = img.dimensions();
+    // RUST FUNDAMENTAL: Destructuring tuple returns into local bindings is a common Rust pattern for small related values.
 
     // Top and bottom edges
     for px in x..=(x + w).min(width - 1) {
@@ -211,6 +236,7 @@ fn render_text_simple(
     font_size: u32,
 ) {
     let font_size = font_size as f32;
+    // RUST FUNDAMENTAL: Explicit casts make numeric conversions visible, especially when switching between integer pixel sizes and float layout math.
     let text_run = crate::font::layout_text_run(text, font_size);
     let baseline_y = y as f32 + font_size * 0.75;
 
@@ -220,6 +246,7 @@ fn render_text_simple(
             continue;
         }
 
+        // RUST FUNDAMENTAL: Borrowing `&text_run.glyphs` means this loop reads glyph data without taking ownership of the shaped text run.
         draw_glyph_bitmap(
             img,
             ch,
@@ -241,6 +268,7 @@ fn draw_glyph_bitmap(
 ) {
     let (width, height) = img.dimensions();
     let Some(metrics) = crate::font::get_glyph_metrics(ch) else {
+        // RUST FUNDAMENTAL: `let ... else` is useful when the success path should stay unindented and the failure case exits early.
         return;
     };
     if metrics.width == 0 || metrics.height == 0 {
@@ -248,6 +276,7 @@ fn draw_glyph_bitmap(
     }
 
     let (atlas, atlas_width, _) = crate::font::get_atlas_texture();
+    // RUST FUNDAMENTAL: Tuple destructuring can ignore fields with `_` when only some returned values matter.
     let scale = scale.max(0.1);
     let draw_origin_x = x + metrics.x_offset as f32 * scale;
     let draw_origin_y = y + metrics.y_offset as f32 * scale;
@@ -256,6 +285,8 @@ fn draw_glyph_bitmap(
 
     for dy in 0..scaled_height {
         for dx in 0..scaled_width {
+            // RUST FUNDAMENTAL: The destination pixel grid may be larger than the source glyph bitmap when scaling up,
+            // so the source coordinate is computed by dividing back down.
             let src_x = ((dx as f32) / scale).floor() as u32;
             let src_y = ((dy as f32) / scale).floor() as u32;
             if src_x >= metrics.width || src_y >= metrics.height {
@@ -265,6 +296,7 @@ fn draw_glyph_bitmap(
             let atlas_x = metrics.x + src_x;
             let atlas_y = metrics.y + src_y;
             let atlas_idx = ((atlas_y * atlas_width + atlas_x) * 4 + 3) as usize;
+            // RUST FUNDAMENTAL: The atlas is RGBA, so `+ 3` indexes the alpha byte of each 4-byte pixel.
             let alpha = atlas.get(atlas_idx).copied().unwrap_or(0);
             if alpha == 0 {
                 continue;
@@ -279,6 +311,7 @@ fn draw_glyph_bitmap(
             let dst = img.get_pixel_mut(draw_x as u32, draw_y as u32);
             let coverage = alpha as f32 / 255.0;
             let inv = 1.0 - coverage;
+            // RUST FUNDAMENTAL: This is straight alpha blending: new_color * coverage + old_color * (1 - coverage).
             dst.0[0] = (color.0[0] as f32 * coverage + dst.0[0] as f32 * inv).round() as u8;
             dst.0[1] = (color.0[1] as f32 * coverage + dst.0[1] as f32 * inv).round() as u8;
             dst.0[2] = (color.0[2] as f32 * coverage + dst.0[2] as f32 * inv).round() as u8;
@@ -289,10 +322,12 @@ fn draw_glyph_bitmap(
 
 fn parse_screenshot_color(color_str: &str) -> image::Rgba<u8> {
     let color_str = color_str.trim().to_lowercase();
+    // RUST FUNDAMENTAL: `to_lowercase()` allocates a new `String` because lowercase conversion can change length.
 
     // Parse hex colors
     if color_str.starts_with('#') {
         let hex = &color_str[1..];
+        // RUST FUNDAMENTAL: Slicing with `[1..]` works here because `#` is an ASCII one-byte prefix.
         if hex.len() == 6 {
             if let Ok(c) = u32::from_str_radix(hex, 16) {
                 return image::Rgba([
@@ -307,6 +342,7 @@ fn parse_screenshot_color(color_str: &str) -> image::Rgba<u8> {
 
     // Default colors
     match color_str.as_str() {
+        // RUST FUNDAMENTAL: `as_str()` borrows a `&str` view from the owned `String` so it can be pattern-matched cheaply.
         "black" => image::Rgba([0, 0, 0, 255]),
         "white" => image::Rgba([255, 255, 255, 255]),
         "red" => image::Rgba([255, 0, 0, 255]),
@@ -331,6 +367,7 @@ fn draw_rect(
 
     for py in y..=(y + h).min(height - 1) {
         for px in x..=(x + w).min(width - 1) {
+            // RUST FUNDAMENTAL: The extra bounds check is defensive and keeps `put_pixel` from ever seeing an invalid coordinate.
             if px < width && py < height {
                 img.put_pixel(px, py, color);
             }
@@ -339,6 +376,7 @@ fn draw_rect(
 }
 
 struct AuroraApp<'a> {
+    // RUST FUNDAMENTAL: This lifetime parameter says the app may borrow a `LayoutTree` that must outlive the app itself.
     layout: &'a LayoutTree,
     context: RenderContext,
     renderers: Vec<Option<Renderer>>,
@@ -349,6 +387,7 @@ struct AuroraApp<'a> {
 
 impl<'a> AuroraApp<'a> {
     fn new(layout: &'a LayoutTree) -> Self {
+        // RUST FUNDAMENTAL: `Self` inside an `impl` block is an alias for the enclosing type, here `AuroraApp<'a>`.
         Self {
             layout,
             context: RenderContext::new(),
@@ -362,11 +401,13 @@ impl<'a> AuroraApp<'a> {
     fn render(&mut self) {
         let surface = self.surface.as_ref().unwrap();
         let _window = self.window.as_ref().unwrap();
+        // RUST FUNDAMENTAL: `.as_ref()` converts `Option<T>` into `Option<&T>`, which lets us borrow instead of move out.
         let width = surface.config.width;
         let height = surface.config.height;
         let device_handle = &self.context.devices[surface.dev_id];
 
         let mut scene = Scene::new();
+        // RUST FUNDAMENTAL: `mut` is required because scene-building methods append drawing commands into the scene.
 
         // Transform the scene based on scroll
         let transform = Affine::translate((0.0, -self.scroll_y));
@@ -386,6 +427,7 @@ impl<'a> AuroraApp<'a> {
             .surface
             .get_current_texture()
             .expect("failed to get surface texture");
+        // RUST FUNDAMENTAL: `expect(...)` is like `unwrap()` but records a clearer panic message for programmer errors.
 
         let render_params = vello::RenderParams {
             base_color: Color::WHITE,
@@ -395,6 +437,7 @@ impl<'a> AuroraApp<'a> {
         };
 
         if self.renderers[surface.dev_id].is_none() {
+            // RUST FUNDAMENTAL: The vector stores one optional renderer per GPU device id, so initialization is lazy and device-specific.
             self.renderers[surface.dev_id] = Some(
                 Renderer::new(
                     &device_handle.device,
@@ -410,6 +453,7 @@ impl<'a> AuroraApp<'a> {
         }
 
         let renderer = self.renderers[surface.dev_id].as_mut().unwrap();
+        // RUST FUNDAMENTAL: `.as_mut()` gives a mutable reference to the renderer inside `Option<Renderer>`.
         renderer
             .render_to_texture(
                 &device_handle.device,
@@ -421,6 +465,7 @@ impl<'a> AuroraApp<'a> {
             .expect("failed to render to texture");
 
         let mut encoder = device_handle.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        // RUST FUNDAMENTAL: GPU APIs often collect commands into an encoder first and submit them later as one batch.
         surface.blitter.copy(
             &device_handle.device,
             &mut encoder,
@@ -438,9 +483,11 @@ impl<'a> winit::application::ApplicationHandler for AuroraApp<'a> {
         let window_attr = Window::default_attributes()
             .with_title("Aurora Browser (GPU Accelerated)")
             .with_inner_size(winit::dpi::LogicalSize::new(1200.0, 900.0));
+        // RUST FUNDAMENTAL: Builder-style APIs chain methods by returning the updated value each time.
         
         let window = Arc::new(event_loop.create_window(window_attr).expect("failed to create window"));
         self.window = Some(window.clone());
+        // RUST FUNDAMENTAL: `Arc::clone` increments the reference count; it does not duplicate the underlying OS window.
 
         // Create surface
         let surface = pollster::block_on(self.context.create_surface(
@@ -450,9 +497,11 @@ impl<'a> winit::application::ApplicationHandler for AuroraApp<'a> {
             vello::wgpu::PresentMode::Fifo,
         ))
             .expect("failed to create surface");
+        // RUST FUNDAMENTAL: `block_on` runs the async surface-creation future to completion in this synchronous callback.
         self.surface = Some(surface);
         
         self.renderers.resize_with(self.context.devices.len(), || None);
+        // RUST FUNDAMENTAL: `resize_with` fills new vector slots by calling the closure once per added element.
         
         window.request_redraw();
     }
@@ -464,6 +513,7 @@ impl<'a> winit::application::ApplicationHandler for AuroraApp<'a> {
         event: WindowEvent,
     ) {
         match event {
+            // RUST FUNDAMENTAL: Matching over an enum like `WindowEvent` is the idiomatic way to dispatch GUI events in Rust.
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
@@ -488,6 +538,7 @@ impl<'a> winit::application::ApplicationHandler for AuroraApp<'a> {
                 }, 
                 .. 
             } => {
+                // RUST FUNDAMENTAL: Pattern matching can destructure nested structs inline and ignore the rest with `..`.
                 match logical_key {
                     Key::Named(NamedKey::Escape) => event_loop.exit(),
                     Key::Named(NamedKey::ArrowDown) => {

@@ -1,4 +1,6 @@
 // Import TLS server name parsing
+// RUST FUNDAMENTAL: External crate imports look just like standard-library imports in code;
+// Cargo is what decides where the crate actually comes from.
 use rustls::pki_types::ServerName;
 // Import TLS client configuration and connections
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
@@ -9,10 +11,12 @@ use std::path::{Path, PathBuf};
 // Import Display/Formatter for error messages
 use std::fmt::{self, Display, Formatter};
 // Import Read and Write traits for socket I/O
+// RUST FUNDAMENTAL: Traits like `Read` and `Write` define shared behavior that many concrete stream types can implement.
 use std::io::{Read, Write};
 // Import TCP stream for network connections
 use std::net::TcpStream;
 // Import Arc for shared pointer to TLS config
+// RUST FUNDAMENTAL: `Arc<T>` is the thread-safe reference-counted pointer type.
 use std::sync::Arc;
 
 // Maximum number of HTTP redirects to follow before giving up
@@ -41,50 +45,51 @@ pub struct ParsedUrl {
 }
 
 // Error types that can occur during fetching
-// RUST FUNDAMENTAL: Enum representing different error variants
-// Using enum instead of exception throwing; encourages explicit error handling
-// Caller must pattern match or use ?, .unwrap(), .expect(), etc.
+// RUST FUNDAMENTAL: Rust usually models recoverable errors as data with `Result<T, E>`.
+// An enum like `FetchError` gives the program a closed set of specific failure cases that callers can inspect explicitly.
 #[derive(Debug)]
 pub enum FetchError {
     // Unknown URL scheme (not http or https)
-    // RUST FUNDAMENTAL: Enum variant with associated data (String)
-    // Access with: FetchError::UnsupportedScheme(scheme) in match arms
+    // RUST FUNDAMENTAL: Variants can carry payloads, so this one stores the actual unsupported scheme string.
+    // That gives error handlers more context than a bare yes/no failure.
     UnsupportedScheme(String),
 
     // Malformed URL string
     InvalidUrl(String),
 
     // I/O error (network socket)
-    // RUST FUNDAMENTAL: Wrapping external error type (std::io::Error)
-    // Allows converting I/O errors into FetchError via From/Into traits
+    // RUST FUNDAMENTAL: It is common to wrap lower-level library errors inside a higher-level application error enum.
+    // That keeps the public API focused while still preserving the original error information.
     Io(std::io::Error),
 
     // TLS/HTTPS error
-    // RUST FUNDAMENTAL: Wrapping rustls::Error for nested error types
-    // Error chaining preserves context; caller can inspect root cause
+    // RUST FUNDAMENTAL: A dedicated variant for TLS failures lets calling code distinguish transport/security problems
+    // from parsing or HTTP protocol problems.
     Tls(rustls::Error),
 
     // Invalid HTTP response format
     InvalidResponse(String),
 
     // HTTP error status code with reason
-    // RUST FUNDAMENTAL: Tuple variant with multiple fields
-    // Distinguishes between types and values: (status_code, reason_phrase)
+    // RUST FUNDAMENTAL: Tuple variants can carry multiple values without naming individual fields.
+    // They are useful when the meaning is obvious from position and the variant name.
     HttpStatus(u16, String),
 
     // Too many redirects encountered
-    // RUST FUNDAMENTAL: Unit variant with no associated data
-    // Signals specific error condition without extra information
+    // RUST FUNDAMENTAL: A unit variant carries no extra payload.
+    // It is the enum equivalent of saying "this exact condition happened, and no further data is needed".
     TooManyRedirects,
 }
 
 impl ParsedUrl {
     fn parse(url: &str) -> Result<Self, FetchError> {
+        // RUST FUNDAMENTAL: Parsing code often works by progressively splitting an input string into smaller validated pieces.
         let (scheme, without_scheme) = if let Some(rest) = url.strip_prefix("http://") {
             (Scheme::Http, rest)
         } else if let Some(rest) = url.strip_prefix("https://") {
             (Scheme::Https, rest)
         } else {
+            // RUST FUNDAMENTAL: Returning `Err(...)` exits the function early with an explicit failure value.
             let scheme = url.split("://").next().unwrap_or(url).to_string();
             return Err(FetchError::UnsupportedScheme(scheme));
         };
@@ -115,6 +120,7 @@ impl ParsedUrl {
             }
             let port = port
                 .parse::<u16>()
+                // RUST FUNDAMENTAL: `.map_err(...)` transforms one error type into another while keeping the success type unchanged.
                 .map_err(|_| FetchError::InvalidUrl(url.to_string()))?;
             (host.to_string(), port)
         } else {
@@ -129,6 +135,7 @@ impl ParsedUrl {
         };
 
         parsed.validate()?;
+        // RUST FUNDAMENTAL: `?` on a `Result` means "if this is `Err`, return that error now; otherwise continue with the success value".
         Ok(parsed)
     }
 
@@ -157,6 +164,7 @@ impl ParsedUrl {
     }
 
     fn validate(&self) -> Result<(), FetchError> {
+        // RUST FUNDAMENTAL: `()` is the unit type, so `Result<(), E>` means "success carries no extra data, only the fact of success".
         if self.host.is_empty()
             || self.host.chars().any(|ch| ch.is_ascii_control() || ch.is_ascii_whitespace())
             || self.path_and_query.chars().any(|ch| ch.is_ascii_control())
@@ -174,6 +182,7 @@ impl ParsedUrl {
 
 impl Display for FetchError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // RUST FUNDAMENTAL: Implementing `Display` gives a type human-readable `{}` formatting.
         match self {
             FetchError::UnsupportedScheme(scheme) => {
                 write!(f, "unsupported URL scheme: {scheme} (only http:// and https:// are supported)")
@@ -190,6 +199,8 @@ impl Display for FetchError {
 
 impl From<std::io::Error> for FetchError {
     fn from(value: std::io::Error) -> Self {
+        // RUST FUNDAMENTAL: `From` implementations enable ergonomic conversion with `.into()` and are also used by `?`
+        // when a lower-level error needs to become a higher-level one.
         Self::Io(value)
     }
 }
@@ -204,12 +215,15 @@ use opus::domain::{Capability, Identity};
 use flate2::read::GzDecoder;
 
 pub fn fetch_html(url: &str, identity: &Identity) -> Result<String, FetchError> {
+    // RUST FUNDAMENTAL: Small wrapper functions are useful when two public APIs share the same implementation today
+    // but may diverge semantically later.
     fetch_string(url, identity)
 }
 
 pub fn fetch_string(url: &str, identity: &Identity) -> Result<String, FetchError> {
     if let Some(path) = url.strip_prefix("file://") {
         require_file_access(identity)?;
+        // RUST FUNDAMENTAL: `map_err(FetchError::Io)` converts a standard I/O result into this module's error type in one expression.
         return std::fs::read_to_string(path).map_err(FetchError::Io);
     }
 
@@ -242,6 +256,7 @@ fn fetch_with_redirects(url: &str, remaining_redirects: usize) -> Result<String,
     let response = send_request(&parsed)?;
 
     if is_redirect(response.status_code) {
+        // RUST FUNDAMENTAL: Recursive retry helpers like this are a clean way to model bounded redirect chains.
         if remaining_redirects == 0 {
             return Err(FetchError::InvalidResponse("too many redirects".to_string()));
         }
@@ -262,6 +277,7 @@ fn fetch_with_redirects(url: &str, remaining_redirects: usize) -> Result<String,
     let mut body = response.body;
     if let Some(encoding) = header_value(&response.headers, "content-encoding") {
         if encoding.eq_ignore_ascii_case("gzip") {
+            // RUST FUNDAMENTAL: `&body[..]` borrows the whole vector as a byte slice, which is what stream-style decoders usually consume.
             let mut decoder = GzDecoder::new(&body[..]);
             let mut decoded = Vec::new();
             if decoder.read_to_end(&mut decoded).is_ok() {
@@ -310,6 +326,7 @@ fn fetch_bytes_with_redirects(url: &str, remaining_redirects: usize) -> Result<V
 }
 
 pub fn resolve_relative_url(base: &str, relative: &str) -> Result<String, FetchError> {
+    // RUST FUNDAMENTAL: Early-return branches keep the special cases close to the top and simplify the remaining "normal path".
     if let Some(base_path) = base.strip_prefix("file://") {
         return resolve_relative_file_url(base_path, relative);
     }
@@ -368,6 +385,8 @@ fn resolve_relative_file_url(base_path: &str, relative: &str) -> Result<String, 
     let absolute = if normalized.is_absolute() {
         normalized
     } else {
+        // RUST FUNDAMENTAL: Standard-library functions that touch the environment or filesystem often return `Result`
+        // because many OS-level operations can fail.
         std::env::current_dir()
             .map_err(FetchError::Io)?
             .join(normalized)
@@ -380,6 +399,7 @@ fn normalize_path(path: PathBuf) -> PathBuf {
     use std::path::Component;
 
     let mut normalized = PathBuf::new();
+    // RUST FUNDAMENTAL: Iterating over `path.components()` yields semantic path pieces like `CurDir`, `ParentDir`, and normal segments.
     for component in path.components() {
         match component {
             Component::CurDir => {}
@@ -393,6 +413,8 @@ fn normalize_path(path: PathBuf) -> PathBuf {
 }
 
 fn send_request(url: &ParsedUrl) -> Result<HttpResponse, FetchError> {
+    // RUST FUNDAMENTAL: `format!` is useful for request construction because it can interpolate numbers, strings,
+    // and helper-method results into one owned request buffer.
     let request = format!(
         "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Aurora/0.1\r\nAccept: text/html, text/css, */*\r\nAccept-Encoding: gzip, identity\r\nConnection: close\r\n\r\n",
         url.path_and_query,
@@ -402,6 +424,7 @@ fn send_request(url: &ParsedUrl) -> Result<HttpResponse, FetchError> {
     match url.scheme {
         Scheme::Http => {
             let mut stream = TcpStream::connect(url.socket_addr())?;
+            // RUST FUNDAMENTAL: Methods like `write_all(...)` come from the `Write` trait, not from `TcpStream` specifically.
             stream.write_all(request.as_bytes())?;
             read_response_bytes(&mut stream)
         }
@@ -411,6 +434,8 @@ fn send_request(url: &ParsedUrl) -> Result<HttpResponse, FetchError> {
             let server_name = ServerName::try_from(url.host.clone())
                 .map_err(|_| FetchError::InvalidUrl(url.host.clone()))?;
             let connection = ClientConnection::new(config, server_name)?;
+            // RUST FUNDAMENTAL: `StreamOwned` is an adapter that combines a TLS state machine and an underlying transport stream
+            // into one object that implements read/write operations.
             let mut tls_stream = StreamOwned::new(connection, stream);
             tls_stream.write_all(request.as_bytes())?;
             read_response_bytes(&mut tls_stream)
@@ -419,6 +444,8 @@ fn send_request(url: &ParsedUrl) -> Result<HttpResponse, FetchError> {
 }
 
 fn read_response_bytes<R: Read>(reader: &mut R) -> Result<HttpResponse, FetchError> {
+    // RUST FUNDAMENTAL: `R: Read` is a generic trait bound, meaning this function works with any reader type
+    // that implements the `Read` trait, not just one concrete stream type.
     let mut response = Vec::new();
     if let Err(e) = reader.read_to_end(&mut response) {
         if e.kind() != std::io::ErrorKind::UnexpectedEof {
@@ -434,6 +461,7 @@ fn read_response_bytes<R: Read>(reader: &mut R) -> Result<HttpResponse, FetchErr
 }
 
 fn tls_config() -> Arc<ClientConfig> {
+    // RUST FUNDAMENTAL: Returning `Arc<ClientConfig>` lets multiple TLS connections share one immutable config value cheaply.
     let root_store = RootCertStore::from_iter(TLS_SERVER_ROOTS.iter().cloned());
     Arc::new(
         ClientConfig::builder()
@@ -443,6 +471,8 @@ fn tls_config() -> Arc<ClientConfig> {
 }
 
 fn require_file_access(identity: &Identity) -> Result<(), FetchError> {
+    // RUST FUNDAMENTAL: Capability checks like this are ordinary boolean conditions in Rust;
+    // the type system does not enforce them automatically, so explicit guard code matters.
     if identity.default_capabilities.contains(&Capability::ReadWorkspace) {
         Ok(())
     } else {
@@ -463,6 +493,8 @@ struct HttpResponse {
 
 impl HttpResponse {
     fn parse(bytes: &[u8]) -> Result<Self, FetchError> {
+        // RUST FUNDAMENTAL: Parsing a byte slice instead of a string first lets the code handle raw protocol framing
+        // before deciding how to decode text portions.
         let header_end = find_header_end(bytes)
             .ok_or_else(|| FetchError::InvalidResponse("missing header terminator".to_string()))?;
         let (head, body_bytes) = bytes.split_at(header_end);
@@ -489,6 +521,7 @@ impl HttpResponse {
                 Some((name.trim().to_ascii_lowercase(), value.trim().to_string()))
             })
             .collect::<Vec<_>>();
+        // RUST FUNDAMENTAL: Lowercasing header names once here makes later header lookup simpler and case-insensitive.
 
         let body = if header_value(&headers, "transfer-encoding")
             .map(|value| value.eq_ignore_ascii_case("chunked"))
@@ -517,6 +550,7 @@ impl HttpResponse {
 }
 
 fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    // RUST FUNDAMENTAL: The explicit lifetime `'a` ties the returned `&str` to the lifetime of the input headers slice.
     headers
         .iter()
         .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
@@ -524,6 +558,8 @@ fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a s
 }
 
 fn find_header_end(bytes: &[u8]) -> Option<usize> {
+    // RUST FUNDAMENTAL: `.windows(n)` walks overlapping fixed-size slices across a larger slice,
+    // which is handy for protocol delimiter searches.
     bytes
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
@@ -531,6 +567,7 @@ fn find_header_end(bytes: &[u8]) -> Option<usize> {
 }
 
 fn strip_header_separator(bytes: &[u8]) -> &[u8] {
+    // RUST FUNDAMENTAL: Returning a subslice here borrows from the original response buffer with zero copying.
     if let Some(stripped) = bytes.strip_prefix(b"\r\n\r\n") {
         stripped
     } else if let Some(stripped) = bytes.strip_prefix(b"\n\n") {
@@ -545,16 +582,19 @@ fn decode_chunked_body(body: &[u8]) -> Result<Vec<u8>, FetchError> {
     let mut decoded = Vec::new();
 
     loop {
+        // RUST FUNDAMENTAL: Cursor-based parsing is a common low-level technique for byte protocols.
         let size_end = find_crlf(body, cursor)
             .ok_or_else(|| FetchError::InvalidResponse("unterminated chunk size".to_string()))?;
         let size_line = std::str::from_utf8(&body[cursor..size_end])
             .map_err(|_| FetchError::InvalidResponse("non-utf8 chunk size".to_string()))?;
         let size_hex = size_line.split(';').next().unwrap_or("").trim();
         let size = usize::from_str_radix(size_hex, 16)
+            // RUST FUNDAMENTAL: `from_str_radix` parses numeric text in a caller-specified base, here hexadecimal.
             .map_err(|_| FetchError::InvalidResponse("invalid chunk size".to_string()))?;
         cursor = size_end + 2;
 
         if size == 0 {
+            // RUST FUNDAMENTAL: A zero-sized chunk is the protocol marker for the end of a chunked HTTP body.
             break;
         }
 
@@ -563,6 +603,7 @@ fn decode_chunked_body(body: &[u8]) -> Result<Vec<u8>, FetchError> {
             return Err(FetchError::InvalidResponse("truncated chunk body".to_string()));
         }
         decoded.extend_from_slice(&body[cursor..chunk_end]);
+        // RUST FUNDAMENTAL: `extend_from_slice` appends bytes efficiently from one slice into a `Vec<u8>`.
         cursor = chunk_end;
 
         if body.get(cursor..cursor + 2) != Some(b"\r\n".as_slice()) {
@@ -575,6 +616,7 @@ fn decode_chunked_body(body: &[u8]) -> Result<Vec<u8>, FetchError> {
 }
 
 fn find_crlf(bytes: &[u8], start: usize) -> Option<usize> {
+    // RUST FUNDAMENTAL: Returning `start + offset` converts a relative position in the subslice back into an absolute cursor position.
     bytes[start..]
         .windows(2)
         .position(|window| window == b"\r\n")
@@ -594,6 +636,7 @@ mod tests {
 
     #[test]
     fn parses_http_urls() {
+        // RUST FUNDAMENTAL: Tests often use `unwrap()` because a failure should crash the test immediately and loudly.
         let parsed = ParsedUrl::parse("http://example.com:8080/cats?name=loaf").unwrap();
         assert_eq!(parsed.scheme, Scheme::Http);
         assert_eq!(parsed.host, "example.com");
@@ -612,6 +655,8 @@ mod tests {
 
     #[test]
     fn rejects_non_http_urls() {
+        // RUST FUNDAMENTAL: Matching on the error enum in tests verifies not just that something failed,
+        // but that it failed for the expected reason.
         match ParsedUrl::parse("ftp://example.com") {
             Err(FetchError::UnsupportedScheme(scheme)) => assert_eq!(scheme, "ftp"),
             other => panic!("unexpected parse result: {other:?}"),

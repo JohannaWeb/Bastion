@@ -1,185 +1,229 @@
 // Module for DOM (Document Object Model) tree representation
-// RUST FUNDAMENTAL: Modules organize code into namespaces; 'mod dom;' declares module
-// Rust searches for dom in: dom.rs file or dom/mod.rs directory
+// RUST FUNDAMENTAL: Modules are Rust's basic namespace system.
+// `mod dom;` tells the compiler that this crate has a `dom` module, and Rust will load it from `dom.rs` or `dom/mod.rs`.
 mod dom;
 
 // Module for CSS stylesheet parsing and cascade rules
-// RUST FUNDAMENTAL: Module tree - each mod creates a namespace; accessed via dom::Node, css::Stylesheet, etc.
+// RUST FUNDAMENTAL: Every `mod` adds another node to the crate's module tree.
+// Items inside that module are then named with paths like `css::Stylesheet` or `dom::Node`.
 mod css;
 
 // Module for fetching HTML and other resources from network
-// RUST FUNDAMENTAL: Private modules by default; pub mod makes public; pub use re-exports
+// RUST FUNDAMENTAL: Items are private by default in Rust, including module contents.
+// You expose them outward with `pub`, and `pub use` can re-export names from one module through another path.
 mod fetch;
 
 // Module for font handling and glyph metrics
-// RUST FUNDAMENTAL: Visibility rules: private inside module, pub to expose to parent, pub(crate) crate-wide
+// RUST FUNDAMENTAL: Visibility in Rust is explicit and path-based.
+// `pub` makes an item visible outside the defining module, while `pub(crate)` keeps it visible only within this crate.
 mod font;
 
 // Module for texture atlasing and glyph rendering
+// RUST FUNDAMENTAL: A module declaration does not execute code by itself.
+// It just tells the compiler to compile another source file into this crate under the `atlas` namespace.
 mod atlas;
 
 // Module for HTML parsing and tokenization
-// RUST FUNDAMENTAL: Circular references managed via Rc<RefCell<>> to avoid ownership issues
+// RUST FUNDAMENTAL: Browser-style trees often need multiple parts of the program to hold references to the same node.
+// This project solves that with `Rc<RefCell<_>>`, which combines shared ownership with runtime-checked mutation.
 mod html;
 
 // Module for layout tree generation from styled nodes
-// RUST FUNDAMENTAL: Tree structures (DOM, Layout, Style) demonstrate recursive ownership patterns
+// RUST FUNDAMENTAL: Recursive data structures are common in Rust, but they usually store owned child collections
+// instead of embedding values directly forever. Each level owns its children, which makes the tree finite and well-structured.
 mod layout;
 
 // Module for painting layout boxes to framebuffer
+// RUST FUNDAMENTAL: Splitting code into many modules is the normal Rust style for medium-sized projects.
+// It keeps each file focused and makes imports explicit at call sites.
 mod paint;
 
 // Module for styling DOM with CSS rules
-// RUST FUNDAMENTAL: StyleTree applies CSS cascade rules to DOM - demonstrates visitor pattern
+// RUST FUNDAMENTAL: This kind of "walk one structure and build another structure" code is a common systems-programming pattern.
+// It resembles a visitor in spirit, even though Rust typically expresses it with plain functions and enums rather than OOP hierarchies.
 mod style;
 
 // Module for legacy JavaScript engine (disabled)
-// RUST FUNDAMENTAL: #[allow(dead_code)] suppresses warnings for intentionally unused code
+// RUST FUNDAMENTAL: Attributes like `#[allow(dead_code)]` attach metadata or compiler directives to items.
+// Here it suppresses the warning that would normally fire for code that is currently unused.
 mod js;
 
 // Module for Boa JavaScript runtime integration
-// RUST FUNDAMENTAL: Boa runtime demonstrates FFI (Foreign Function Interface) pattern in Rust
+// RUST FUNDAMENTAL: Integrating another runtime or library usually means crossing some API boundary.
+// In Rust that broad idea is often described as FFI or embedding, even when the other component is also written in Rust.
 mod js_boa;
 
 // Module for GPU window rendering and display
-// RUST FUNDAMENTAL: Window module uses winit for cross-platform event handling - trait objects pattern
+// RUST FUNDAMENTAL: Cross-platform libraries often hide platform differences behind traits and concrete backend types.
+// User code then works against the common API instead of directly targeting X11, Wayland, Cocoa, and so on.
 mod window;
 
 // Module for GPU painting capabilities (currently unused)
-// RUST FUNDAMENTAL: #[allow(dead_code)] allows keeping prototype code for future use
+// RUST FUNDAMENTAL: Rust warns aggressively about unused code because it often signals a bug or dead branch.
+// When a module is intentionally parked for future use, `#[allow(dead_code)]` documents that intent to the compiler.
 #[allow(dead_code)]
 mod gpu_paint;
 
 // Import CSS stylesheet type for managing style rules
-// RUST FUNDAMENTAL: 'use' imports bring items into current namespace; 'crate::' refers to root
+// RUST FUNDAMENTAL: `use` creates a local name for an item that already exists somewhere else.
+// `crate::...` starts the path from the current crate root, which is useful for absolute intra-project imports.
 use crate::css::Stylesheet;
 
 // Import HTML fetching function for loading remote documents
-// RUST FUNDAMENTAL: Functions are items like structs/enums - can be imported with 'use'
+// RUST FUNDAMENTAL: In Rust, free functions are first-class items in the module system.
+// That means they can be imported with `use` just like structs, enums, traits, and constants.
 use crate::fetch::fetch_html;
 
 // Import HTML parser for converting HTML strings to DOM
-// RUST FUNDAMENTAL: Type imports (struct Parser) allow Parser::new() without crate prefix
+// RUST FUNDAMENTAL: Importing a type shortens call sites.
+// After `use crate::html::Parser;`, code can write `Parser::new(...)` instead of the longer full path.
 use crate::html::Parser;
 
 // Import layout tree for spatial box calculations
-// RUST FUNDAMENTAL: Each module re-exports public items; use statements resolve them hierarchically
+// RUST FUNDAMENTAL: Rust resolves names through module paths, and only public items can be reached from outside their module.
+// `use` does not copy anything; it only gives the current scope a convenient binding to that path.
 use crate::layout::LayoutTree;
 
 // Import style tree for DOM nodes with applied styles
+// RUST FUNDAMENTAL: When two types live in different modules, `use` keeps the local code from turning into long path soup.
 use crate::style::StyleTree;
 
 // Import PathBuf for file system path manipulation
-// RUST FUNDAMENTAL: std:: is Rust's standard library; PathBuf is owned string for paths (like String)
+// RUST FUNDAMENTAL: `std` is the standard library namespace.
+// `PathBuf` is the owned, mutable path type, roughly analogous to how `String` is the owned form of string data.
 use std::path::PathBuf;
 
 // Import Rc for reference counting shared data
-// RUST FUNDAMENTAL: Rc<T> - Reference Counting; enables multiple ownership without garbage collector
-// Thread-unsafe but zero-cost; use Arc<T> for thread-safe reference counting
+// RUST FUNDAMENTAL: `Rc<T>` means "reference-counted pointer".
+// Multiple parts of the program can own clones of the same pointer, and the value is dropped only when the last clone goes away.
+// `Rc` uses non-atomic counting, so it is cheaper but limited to single-threaded code; `Arc<T>` is the thread-safe version.
 use std::rc::Rc;
 
 // Import capability types and identity from Opus domain model
-// RUST FUNDAMENTAL: External crate imports use crate name directly; Cargo.toml controls dependencies
+// RUST FUNDAMENTAL: External dependencies appear in code by their crate name.
+// Cargo resolves those names using `Cargo.toml`, downloads/builds the crates, and links them into this project.
 use opus::domain::{Capability, Identity};
 
 // Import environment variable access
-// RUST FUNDAMENTAL: std::env provides OS interface; std::env::args() and std::env::var() are common
+// RUST FUNDAMENTAL: `std::env` is the standard-library module for interacting with process environment data.
+// Two common entry points are command-line arguments and environment variables.
 use std::env;
 
 // Entry point function for Aurora browser
-// RUST FUNDAMENTAL: fn main() {} is the program entry point; execution starts here
-// Return type: () (unit type, similar to void in C); implicit return of () if no explicit return
+// RUST FUNDAMENTAL: `main` is the executable entry point for a Rust binary crate.
+// This version returns `()`, the unit type, which is Rust's "no meaningful value" result and is similar to `void` in other languages.
 fn main() {
     // Print startup message to stdout
-    // RUST FUNDAMENTAL: println! is a macro (! suffix); compiles to formatted print code at compile-time
+    // RUST FUNDAMENTAL: The `!` means `println!` is a macro, not a normal function.
+    // Macros operate on syntax and can expand into more code during compilation, which is how formatted printing works here.
     println!("Aurora: Starting up...");
 
     // Install rustls crypto provider for TLS operations
-    // RUST FUNDAMENTAL: Method chaining - each method returns Self or Option/Result for chaining
-    // :: is namespace operator; rustls::crypto::ring is fully qualified path
+    // RUST FUNDAMENTAL: `::` is the path separator for modules, types, and associated items.
+    // Chaining works because each call returns another value that the next call can operate on.
     rustls::crypto::ring::default_provider()
         // Configure as default crypto backend
-        // RUST FUNDAMENTAL: .install_default() consumes self (takes ownership), returns Result<(), Error>
+        // RUST FUNDAMENTAL: Methods can take ownership of `self`, borrow it immutably, or borrow it mutably.
+        // This method consumes the provider value and returns a `Result`, forcing the caller to handle success or failure.
         .install_default()
         // Panic if crypto provider fails to install
-        // RUST FUNDAMENTAL: .expect(msg) unwraps Ok(T), or panics with message if Err(E)
-        // Used when we know error shouldn't happen, or when failing is appropriate
+        // RUST FUNDAMENTAL: `expect(...)` extracts the success value from a `Result`.
+        // If the result is `Err`, the program panics and prints the provided message, which is acceptable when failure is unrecoverable.
         .expect("Failed to install rustls crypto provider");
     // Print confirmation that crypto provider loaded
     println!("Aurora: Crypto provider installed.");
 
     // Create identity tuple with Johanna's capabilities and permissions
-    // RUST FUNDAMENTAL: let binding creates variable; type inferred from Identity::new() return
+    // RUST FUNDAMENTAL: `let` creates a new binding, and Rust usually infers the type from the right-hand side.
+    // Explicit type annotations are optional unless inference would be ambiguous or you want extra clarity.
     let identity = Identity::new(
         // Identity URI using decentralized identifier format
-        // RUST FUNDAMENTAL: &str literals are string slices (immutable references); &'static str for compile-time strings
+        // RUST FUNDAMENTAL: A string literal has type `&'static str`.
+        // It is a borrowed string slice pointing at bytes baked into the program binary for the entire run of the program.
         "did:human:johanna",
         // Human-readable name
         "Johanna",
         // Mark this as a human identity type
-        // RUST FUNDAMENTAL: :: syntax for enum variants (like Java's Enum.VARIANT)
+        // RUST FUNDAMENTAL: Enum variants are namespaced by their enum type, so `IdentityKind::Human`
+        // means "the `Human` variant of the `IdentityKind` enum".
         opus::domain::IdentityKind::Human,
         // Array of capabilities this identity has: network access and workspace read
-        // RUST FUNDAMENTAL: [T; N] is fixed-size array; passed by copy since Copy trait implemented
-        // Different from Vec<T> (heap-allocated, growable)
+        // RUST FUNDAMENTAL: `[T; N]` is a fixed-size array whose length is part of its type.
+        // Arrays are usually stored inline, unlike `Vec<T>`, which is a heap-allocated growable buffer.
         [Capability::NetworkAccess, Capability::ReadWorkspace],
     );
 
     // Parse command-line arguments and environment variables into CLI options
+    // RUST FUNDAMENTAL: An associated function like `CliOptions::from_env()` is often used as a smart constructor.
+    // It centralizes all setup logic so `main` can work with one parsed value instead of raw strings and flags.
     let cli = CliOptions::from_env();
 
     // Fetch HTML content from URL or use demo HTML if no URL provided
-    // RUST FUNDAMENTAL: match expression - exhaustive pattern matching; all arms must return same type
+    // RUST FUNDAMENTAL: `match` is an expression, not just a statement.
+    // That means it produces a value, and every arm must evaluate to a compatible type.
     let html = match cli.input_url.as_deref() {
-        // RUST FUNDAMENTAL: Option<T> enum has Some(T) and None variants
-        // .as_deref() converts Option<String> to Option<&str> (dereference projection)
-        // If URL is provided in arguments
+        // RUST FUNDAMENTAL: `Option<T>` encodes "maybe there is a value".
+        // `Some(T)` means present, `None` means absent, and the type system forces callers to deal with both cases.
+        // `.as_deref()` converts `Option<String>` into `Option<&str>` by borrowing the inner string instead of cloning it.
         Some(url) => match fetch_html(url, &identity) {
-            // RUST FUNDAMENTAL: Result<T, E> enum has Ok(T) and Err(E) variants
-            // fetch_html() returns Result<String, FetchError>
-            // If fetch succeeds, use the fetched HTML
+            // RUST FUNDAMENTAL: `Result<T, E>` is the standard error-handling type in Rust.
+            // `Ok(T)` holds a success value and `Err(E)` holds an error value; this makes failures explicit instead of exceptional.
             Ok(html) => html,
             // If fetch fails, print error and exit with code 1
             Err(error) => {
-                // RUST FUNDAMENTAL: eprintln! prints to stderr (standard error stream)
-                // {url} and {error} are interpolated using Display trait formatting
+                // RUST FUNDAMENTAL: `eprintln!` is the stderr counterpart to `println!`.
+                // The `{...}` placeholders use formatting traits such as `Display` to render values as text.
                 eprintln!("Failed to fetch {url}: {error}");
-                // RUST FUNDAMENTAL: std::process::exit(code) terminates program immediately
-                // 0 = success, non-zero = error code
+                // RUST FUNDAMENTAL: `std::process::exit` terminates the process immediately with the given status code.
+                // By convention, `0` means success and non-zero values indicate different failure conditions.
                 std::process::exit(1);
             }
         },
         // If no URL provided, use hardcoded demo HTML
-        // RUST FUNDAMENTAL: None pattern in match - handled separately from Some
+        // RUST FUNDAMENTAL: Matching `None` explicitly is what makes the "missing URL" case visible in code instead of implicit.
         None => demo_html().to_string(),
     };
 
     // Clone URL argument for later use in stylesheet parsing
-    // RUST FUNDAMENTAL: .clone() creates deep copy of String; needed because html moved into binding above
-    // Clone only when necessary - prefer borrowing (&) when possible for performance
+    // RUST FUNDAMENTAL: `.clone()` creates a second owned `Option<String>` with duplicated string contents if present.
+    // In Rust, cloning is always explicit, which makes copying costs easier to spot during code review.
     let url_arg = cli.input_url.clone();
 
     // Set viewport width in pixels (width of rendering canvas)
-    // RUST FUNDAMENTAL: 1200.0 is f64 literal (64-bit float); f32 suffix needed for 32-bit float
-    // Type inference determines 1200.0_f32 based on function parameter types
+    // RUST FUNDAMENTAL: Unsuffixed float literals start as an inferred floating-point type.
+    // Rust will choose `f32` or `f64` based on surrounding context if it can; otherwise you may need an explicit suffix.
     let viewport_width = 1200.0;
     // Parse HTML string into DOM tree structure
+    // RUST FUNDAMENTAL: Borrowing with `&html` lets the parser read the string without taking ownership of it.
+    // That means `html` can still be used later in this scope if needed.
     let dom = Parser::new(&html).parse_document();
     // Extract stylesheets from DOM (style tags) and create stylesheet object
+    // RUST FUNDAMENTAL: `let mut` means the binding itself may be reassigned or mutated through methods requiring `&mut self`.
+    // Here we need mutability because we merge additional rules into the stylesheet after construction.
     let mut stylesheet = Stylesheet::from_dom(&dom, url_arg.as_deref(), &identity);
     // Merge user agent default styles (browser built-in styles)
+    // RUST FUNDAMENTAL: A mutating method like `.merge(...)` usually takes `&mut self`.
+    // The caller keeps ownership of the same value while allowing the method to change its internal state.
     stylesheet.merge(Stylesheet::user_agent_stylesheet());
     // Apply stylesheet rules to DOM tree, creating styled nodes
+    // RUST FUNDAMENTAL: Passing shared references like `&dom` and `&stylesheet` is cheap because only the pointer-sized borrow is copied.
+    // Rust prefers borrowing over cloning whenever ownership transfer is unnecessary.
     let style_tree = StyleTree::from_dom(&dom, &stylesheet);
     // Generate layout boxes from styled tree with calculated positions and sizes
+    // RUST FUNDAMENTAL: This is a classic pipeline step: parse -> style -> layout.
+    // Rust code often models staged transforms by constructing a new owned value from the previous stage.
     let layout = LayoutTree::from_style_tree_with_viewport_width(&style_tree, viewport_width);
 
     // If DOM debug flag set, print the parsed DOM tree structure
+    // RUST FUNDAMENTAL: An `if` condition must evaluate to `bool`; Rust does not implicitly treat other values as truthy or falsy.
     if cli.debug_dom {
+        // RUST FUNDAMENTAL: `dom.borrow()` returns a temporary shared borrow guard from `RefCell`.
+        // Formatting uses that borrowed view and then the guard is dropped at the end of the statement.
         println!("{}", dom.borrow());
     }
     // If style debug flag set, print the styled tree with applied CSS
     if cli.debug_style {
+        // RUST FUNDAMENTAL: Format strings can reference variables directly inside `{...}` when the type implements the needed formatting trait.
         println!("{style_tree}");
     }
     // If layout debug flag set, print the layout tree with positions
@@ -188,18 +232,26 @@ fn main() {
     }
 
     // Extract all script elements (inline and external) from the DOM
+    // RUST FUNDAMENTAL: The function returns an owned `Vec`, so `scripts` now owns the list of discovered script descriptors.
     let scripts = extract_scripts(&dom);
     // Only process scripts if any were found
+    // RUST FUNDAMENTAL: `is_empty()` is often clearer than comparing `len()` to zero because it states the intent directly.
     if !scripts.is_empty() {
         // Print number of scripts being processed
         println!("Boa: Processing {} scripts...", scripts.len());
         // Create new Boa JavaScript runtime, sharing reference to DOM
+        // RUST FUNDAMENTAL: `Rc::clone(&dom)` clones the reference-counted pointer, not the whole DOM tree.
+        // Both `dom` and `runtime` now share ownership of the same underlying node graph.
         let mut runtime = js_boa::BoaRuntime::new(Rc::clone(&dom));
         // Iterate over each script tuple (content/URL, is_external_flag)
+        // RUST FUNDAMENTAL: A `for` loop consumes the vector here because we iterate by value, not by reference.
+        // Each loop iteration takes ownership of one `(String, bool)` tuple from `scripts`.
         for (source, is_url) in scripts {
             // Determine script content by loading from URL or using inline
+            // RUST FUNDAMENTAL: `if` is also an expression in Rust, so this whole block produces the `String` assigned to `script_content`.
             let script_content = if is_url {
                 // If script has a src attribute, treat as external URL
+                // RUST FUNDAMENTAL: `if let Some(base) = ...` is a concise way to continue only when an optional value exists.
                 if let Some(base) = url_arg.as_deref() {
                     // Resolve relative URLs against document base URL
                     match crate::fetch::resolve_relative_url(base, &source) {
@@ -213,6 +265,8 @@ fn main() {
                                 Ok(content) => content,
                                 // Skip script if fetch fails
                                 Err(e) => {
+                                    // RUST FUNDAMENTAL: `continue` skips the rest of the current loop iteration and jumps to the next item.
+                                    // It is useful for recoverable per-item failures inside batch processing loops.
                                     eprintln!("Failed to fetch script {}: {}", full_url, e);
                                     continue;
                                 }
@@ -226,14 +280,19 @@ fn main() {
                     }
                 } else {
                     // Skip external script if no base URL available
+                    // RUST FUNDAMENTAL: This branch still type-checks because `continue` never produces a normal value.
+                    // In Rust, control-flow expressions like `continue`, `break`, and `return` have the special `!` never type.
                     continue;
                 }
             } else {
                 // Use inline script content directly
+                // RUST FUNDAMENTAL: Because `source` is owned in this loop, returning it here moves the `String` into `script_content`.
                 source
             };
 
             // Execute script in Boa runtime with error handling
+            // RUST FUNDAMENTAL: `if let Err(e) = ...` is the mirror image of matching a success case.
+            // It keeps the happy path visually compact while still handling failures explicitly.
             if let Err(e) = runtime.execute(&script_content) {
                 // Print JavaScript execution errors to stderr
                 eprintln!("JS Error: {}", e);
@@ -243,19 +302,26 @@ fn main() {
 
     // Initialize font atlas before rendering (forces glyph load)
     // Get metrics for sample character to populate atlas
+    // RUST FUNDAMENTAL: Binding to `_` explicitly discards the returned value.
+    // This is common when you want a function's side effect or lazy initialization but do not need the actual result.
     let _ = crate::font::get_glyph_metrics('A');
 
     // Check environment variables to determine rendering mode
     // Check if screenshot output path is specified in environment
+    // RUST FUNDAMENTAL: `Result::is_ok()` collapses a `Result<T, E>` into a plain boolean answering only "did this succeed?".
     let has_screenshot = env::var("AURORA_SCREENSHOT").is_ok();
     // Check if headless mode is explicitly requested
     let is_headless = env::var("AURORA_HEADLESS").is_ok();
     // Check if X11 or Wayland display server is available
+    // RUST FUNDAMENTAL: `||` is short-circuiting logical OR, so the right-hand side is evaluated only if the left-hand side is false.
     let has_display = env::var("DISPLAY").is_ok() || env::var("WAYLAND_DISPLAY").is_ok();
 
     // Decide whether to attempt window rendering
+    // RUST FUNDAMENTAL: Boolean expressions can be grouped with parentheses for readability,
+    // but Rust's precedence rules would still make this expression unambiguous without them.
     if has_screenshot || (!is_headless && has_display) {
         // Attempt to open interactive GPU window for rendering
+        // RUST FUNDAMENTAL: `if let Err(error) = ...` both checks for failure and binds the error value in one step.
         if let Err(error) = window::open(&layout) {
             // Print error if window creation fails
             eprintln!("Window disabled: {error}");
@@ -263,6 +329,8 @@ fn main() {
             eprintln!("Set AURORA_SCREENSHOT=/path/output.png for file output or AURORA_HEADLESS=1 to skip window creation.");
         }
     } else if !is_headless && !has_display {
+        // RUST FUNDAMENTAL: `else if` is just another conditional branch in the same chain.
+        // The first branch whose condition is true runs, and the rest are skipped.
         // Print message if no display server detected (and not explicitly headless)
         eprintln!("No display server detected; skipping window creation.");
         // Suggest screenshot mode as alternative
@@ -274,21 +342,23 @@ fn main() {
 }
 
 // Structure holding parsed command-line and environment options
-// RUST FUNDAMENTAL: #[derive(Debug, Clone)] - derives generate implementations for us
-// Debug - enables {:?} formatting; Clone - auto-generates clone() method
-// Avoid #[derive(Copy)] for types containing String (Copy requires no heap allocation)
+// RUST FUNDAMENTAL: `#[derive(...)]` asks the compiler to generate standard trait implementations automatically.
+// `Debug` enables developer-facing formatting, and `Clone` generates a `clone()` method that duplicates the struct field-by-field.
+// `Copy` is intentionally not derived here because types containing `String` require explicit cloning rather than implicit bitwise copying.
 #[derive(Debug, Clone)]
 struct CliOptions {
     // Optional URL to fetch and render as input
-    // RUST FUNDAMENTAL: Option<T> = Some(T) | None; safe null handling avoiding null pointer errors
-    // Encourages handling both cases explicitly via match or .map()
+    // RUST FUNDAMENTAL: Using `Option<String>` is Rust's replacement for nullable references or nullable strings.
+    // The type itself tells readers and the compiler that this field may be absent.
     input_url: Option<String>,
 
     // Flag to print DOM tree after parsing
-    // RUST FUNDAMENTAL: bool is primitive (Copy); immutable by default; use mut for mutability
+    // RUST FUNDAMENTAL: `bool` is a small primitive type and implements `Copy`,
+    // so assigning it copies the value instead of moving ownership.
     debug_dom: bool,
 
     // Flag to print styled tree after CSS application
+    // RUST FUNDAMENTAL: Small plain-data structs like this are common in Rust for bundling related configuration.
     debug_style: bool,
 
     // Flag to print layout tree after position calculations
@@ -296,23 +366,25 @@ struct CliOptions {
 }
 
 // Implementation of CliOptions parsing from command-line args
-// RUST FUNDAMENTAL: impl allows adding methods to types; separate from struct definition
-// Associated functions (no self) called with CliOptions::from_env(); methods need &self
+// RUST FUNDAMENTAL: Rust separates data definitions from behavior by putting methods in `impl` blocks.
+// Associated functions like `from_env()` have no receiver, while methods take `self`, `&self`, or `&mut self`.
 impl CliOptions {
     // Parse environment variables and command-line arguments
-    // RUST FUNDAMENTAL: fn from_env() -> Self is constructor pattern; returns instance of Self (CliOptions)
+    // RUST FUNDAMENTAL: Rust has no special constructor keyword.
+    // A plain associated function returning `Self` is the idiomatic constructor pattern.
     fn from_env() -> Self {
         // Skip program name, iterate over remaining arguments
-        // RUST FUNDAMENTAL: env::args() returns iterator over String; .skip(1) skips argv[0]
-        // Iterators are lazy - chain operations without allocating intermediate collections
+        // RUST FUNDAMENTAL: `env::args()` returns an iterator, not a pre-built vector.
+        // Iterators in Rust are lazy, so adapters like `.skip(1)` describe how to process values without allocating intermediate collections.
         let mut args = env::args().skip(1);
 
         // Start with no input URL
-        // RUST FUNDAMENTAL: let mut makes variable mutable; necessary for args.next() and reassignments
+        // RUST FUNDAMENTAL: Bindings are immutable by default in Rust.
+        // `mut` opts into mutation explicitly, which makes state changes easier to notice.
         let mut input_url = None;
 
         // Check for debug flags in environment variables
-        // RUST FUNDAMENTAL: Function calls initialize with function return value
+        // RUST FUNDAMENTAL: A binding can be initialized directly from any expression, including a function call.
         let mut debug_dom = env_flag("AURORA_DEBUG_DOM");
 
         // Check environment for debug style flag
@@ -322,18 +394,18 @@ impl CliOptions {
         let mut debug_layout = env_flag("AURORA_DEBUG_LAYOUT");
 
         // Process each command-line argument
-        // RUST FUNDAMENTAL: while let Some(arg) = iterator.next() unwraps Option in loop condition
-        // Cleaner than traditional while loops; stops when iterator returns None
+        // RUST FUNDAMENTAL: `while let` combines looping with pattern matching.
+        // This pattern keeps pulling items until `next()` returns `None`, at which point the loop ends naturally.
         while let Some(arg) = args.next() {
             // Match argument against known flags and values
-            // RUST FUNDAMENTAL: match arg.as_str() pattern match on enum/string; all cases must be handled
-            // Compiler ensures exhaustiveness - misses = compile error (safe by default)
+            // RUST FUNDAMENTAL: Matching on `arg.as_str()` lets us branch on borrowed string slices instead of allocating new strings.
+            // As with other matches, the compiler checks that the set of patterns is exhaustive.
             match arg.as_str() {
                 // Fixture mode: load HTML from fixtures directory
                 "--fixture" => {
                     // Get the next argument as fixture name
-                    // RUST FUNDAMENTAL: let Some(name) = args.next() else { error } is let-else pattern
-                    // Introduced in Rust 1.65; destructures Option with fallback for None case
+                    // RUST FUNDAMENTAL: `let ... else` is a destructuring form that requires a pattern to match.
+                    // If the pattern fails, control immediately jumps to the `else` block, which is useful for early-exit parsing code.
                     let Some(name) = args.next() else {
                         // Error if no name provided after flag
                         eprintln!("Missing fixture name after --fixture");
@@ -341,10 +413,12 @@ impl CliOptions {
                         std::process::exit(2);
                     };
                     // Construct file URL to fixture HTML
+                    // RUST FUNDAMENTAL: `Some(...)` wraps a concrete value into the present case of `Option`.
                     input_url = Some(fixture_url(&name));
                 }
 
                 // Override debug_dom with command-line flag
+                // RUST FUNDAMENTAL: Assignment to a `bool` replaces the previous value; because `bool` is `Copy`, no ownership issues are involved.
                 "--debug-dom" => debug_dom = true,
 
                 // Override debug_style with command-line flag
@@ -354,26 +428,27 @@ impl CliOptions {
                 "--debug-layout" => debug_layout = true,
 
                 // Reject unknown flags starting with --
-                // RUST FUNDAMENTAL: if guard (if other.starts_with("--")) refines pattern matching
-                // Matches when pattern and guard both true
+                // RUST FUNDAMENTAL: This uses a match guard.
+                // The arm is selected only if the pattern matches and the extra boolean condition is also true.
                 other if other.starts_with("--") => {
                     eprintln!("Unknown flag: {other}");
                     std::process::exit(2);
                 }
 
                 // Treat other arguments as input URL
-                // RUST FUNDAMENTAL: _ is catch-all pattern; other captures the value for use
-                // Pattern is evaluated in order - must come after specific cases
+                // RUST FUNDAMENTAL: Match arms are checked top to bottom.
+                // This final arm is effectively the fallback case for any argument that did not match a more specific pattern above.
                 other => {
+                    // RUST FUNDAMENTAL: `.to_string()` allocates a new owned `String` from a borrowed `&str`.
                     input_url = Some(other.to_string());
                 }
             }
         }
 
         // Return populated CliOptions struct
-        // RUST FUNDAMENTAL: Self refers to the type being implemented on (CliOptions here)
-        // Uses shorthand struct construction: Self { field1, field2 } instead of CliOptions { ... }
-        // All fields must be initialized; compiler checks for missing fields
+        // RUST FUNDAMENTAL: Inside an `impl CliOptions`, the name `Self` is just shorthand for `CliOptions`.
+        // Struct literal shorthand like `Self { input_url, debug_dom, ... }` reuses variable names when they match field names.
+        // Rust requires every non-defaulted field to be initialized here.
         Self {
             input_url,
             debug_dom,
@@ -384,21 +459,21 @@ impl CliOptions {
 }
 
 // Check if environment variable is set to a truthy value
-// RUST FUNDAMENTAL: Functions decompose logic; pure functions (deterministic, side-effect-free) preferred
+// RUST FUNDAMENTAL: Small helper functions keep logic local and make call sites easier to read.
+// When a function has no side effects and depends only on its inputs, it is especially easy to test and reason about.
 fn env_flag(name: &str) -> bool {
     // Get environment variable and check if it matches any true values
-    // RUST FUNDAMENTAL: matches! macro - shorthand for pattern matching boolean result
-    // Equivalent to: match env::var(name).as_deref() { Ok("1") | ... => true, _ => false }
+    // RUST FUNDAMENTAL: `matches!` is a macro that returns `true` when an expression fits a pattern and `false` otherwise.
+    // It is useful when you want the power of pattern matching but only need a boolean answer.
     matches!(
         // Read environment variable and dereference for comparison
-        // RUST FUNDAMENTAL: env::var() returns Result<String, VarError>
-        // .as_deref() converts Result<String, E> to Result<&str, E> (borrows instead of moving)
-        // Allows pattern matching on &str without consuming the String
+        // RUST FUNDAMENTAL: `env::var()` returns a `Result` because environment lookup can fail.
+        // `.as_deref()` then converts the successful `String` into `&str` by borrowing it, which makes the later string-pattern match cheaper.
         env::var(name).as_deref(),
 
         // Match "1", "true" (any case), or "yes" (any case)
-        // RUST FUNDAMENTAL: | is OR pattern - matches if any arm matches
-        // Ok(...) unwraps Ok variant, literal string patterns match exactly
+        // RUST FUNDAMENTAL: `|` combines patterns with logical OR semantics inside pattern matching.
+        // Any one of these successful `Ok("...")` forms will satisfy the macro.
         Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes") | Ok("YES")
     )
 }
@@ -406,20 +481,26 @@ fn env_flag(name: &str) -> bool {
 // Construct file:// URL to a test fixture HTML file
 fn fixture_url(name: &str) -> String {
     // Get the Cargo manifest directory (project root) at compile time
+    // RUST FUNDAMENTAL: `env!(...)` is a compile-time macro, not a runtime environment lookup.
+    // It embeds the environment variable's value directly into the compiled binary as a string literal.
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     // Add fixtures subdirectory
+    // RUST FUNDAMENTAL: `PathBuf` is mutable, so methods like `.push(...)` modify the existing path in place.
     path.push("fixtures");
     // Add fixture name directory
     path.push(name);
     // Add index.html as the document to load
     path.push("index.html");
     // Format as file:// URL with absolute path
+    // RUST FUNDAMENTAL: `format!(...)` is to strings what `println!(...)` is to output: it builds and returns an owned `String`.
     format!("file://{}", path.display())
 }
 
 // Return hardcoded HTML demo content for default rendering
 fn demo_html() -> &'static str {
     // Return static string containing complete HTML document
+    // RUST FUNDAMENTAL: A raw string literal `r#"... "#` treats most characters literally.
+    // That makes it convenient for embedded HTML, CSS, or JSON where backslashes and quotes would otherwise need escaping.
     r#"
         <html>
             <head>
@@ -461,85 +542,92 @@ fn demo_html() -> &'static str {
 }
 
 // Extract all script tags from DOM and return (content/src, is_external) tuples
-// RUST FUNDAMENTAL: Function returns Vec<(String, bool)> - vector of tuples
-// Tuple (String, bool) represents (script_content_or_url, is_external_flag)
+// RUST FUNDAMENTAL: Return types can be nested composite types.
+// `Vec<(String, bool)>` means "a growable list of 2-tuples", where each tuple stores a string plus a flag describing what that string means.
 fn extract_scripts(node: &crate::dom::NodePtr) -> Vec<(String, bool)> {
     // Initialize result vector to collect script tuples
-    // RUST FUNDAMENTAL: Vec::new() creates empty heap-allocated vector; grows as needed
+    // RUST FUNDAMENTAL: As with other vectors, this starts empty and grows as scripts are discovered during traversal.
     let mut scripts = Vec::new();
 
     // Define nested walk function to traverse DOM tree recursively
-    // RUST FUNDAMENTAL: Inner function (nested function) captures scripts via mutable parameter
-    // &mut Vec<...> allows walk() to modify scripts; by-reference avoids copying Vector
+    // RUST FUNDAMENTAL: Rust allows defining helper functions inside other functions when the helper is only locally relevant.
+    // This one does not close over outer variables; instead it receives `scripts` explicitly as `&mut Vec<_>`.
     fn walk(node: &crate::dom::NodePtr, scripts: &mut Vec<(String, bool)>) {
         // Borrow the node to access its data
-        // RUST FUNDAMENTAL: .borrow() returns Ref<T> (shared borrow); single reader allowed
-        // Opposite of .borrow_mut() which panics if anyone else holds a borrow
+        // RUST FUNDAMENTAL: `RefCell::borrow()` returns a smart borrow guard, `Ref<T>`.
+        // Multiple shared borrows can coexist, but a mutable borrow would require exclusivity and would panic if another borrow is still active.
         let node_borrow = node.borrow();
 
         // Match on node type
-        // RUST FUNDAMENTAL: &*node_borrow dereferences Ref<Node> to &Node for pattern matching
-        // Pattern matching exhaustiveness checked at compile-time; all variants must be handled
+        // RUST FUNDAMENTAL: `Ref<T>` implements deref, so `&*node_borrow` turns the borrow guard into a plain `&Node`.
+        // That lets `match` work directly on the underlying enum value.
         match &*node_borrow {
             // If node is a script element
-            // RUST FUNDAMENTAL: if guard (if el.tag_name == "script") refines pattern
-            // Match only if both pattern matches AND condition is true
+            // RUST FUNDAMENTAL: This arm matches only element nodes whose tag name also satisfies the guard condition.
+            // Guards are a nice way to keep structural matching and boolean filtering in one place.
             crate::dom::Node::Element(el) if el.tag_name == "script" => {
                 // Check if script has src attribute (external script)
-                // RUST FUNDAMENTAL: .get(key) returns Option<&V>; if let unwraps Some
+                // RUST FUNDAMENTAL: Map lookup returns `Option<&V>` because the key might be missing.
+                // `if let Some(src) = ...` handles only the present case without forcing a full `match`.
                 if let Some(src) = el.attributes.get("src") {
                     // Add src URL as external script (true flag)
-                    // RUST FUNDAMENTAL: .push((src.clone(), true)) adds tuple to vector
-                    // .clone() needed because src is &String (borrowed), tuple needs owned String
+                    // RUST FUNDAMENTAL: The vector stores owned strings, but `get()` gave us `&String`.
+                    // Cloning produces a new owned value we can move into the tuple stored by the vector.
                     scripts.push((src.clone(), true));
                 } else {
                     // No src attribute means inline script
                     // Collect text content from script children
-                    // RUST FUNDAMENTAL: String::new() creates empty owned String
+                    // RUST FUNDAMENTAL: `String::new()` creates an empty owned string buffer we can append to incrementally.
                     let mut content = String::new();
 
                     // Iterate through script tag's children
-                    // RUST FUNDAMENTAL: for loop borrows el.children; iteration consumes no ownership
+                    // RUST FUNDAMENTAL: Iterating over `&el.children` borrows the vector rather than taking ownership of it.
+                    // That lets the element keep its child list intact while we inspect each child.
                     for child in &el.children {
                         // Borrow child to check its type
+                        // RUST FUNDAMENTAL: The borrow is scoped to this loop iteration's `child_borrow` binding.
+                        // Once that binding goes out of scope, the `RefCell` borrow guard is dropped automatically.
                         let child_borrow = child.borrow();
 
                         // If child is text node, append to content
-                        // RUST FUNDAMENTAL: if let pattern matches Text variant, destructures String
+                        // RUST FUNDAMENTAL: Pattern matching can destructure borrowed enum values too.
+                        // Here `t` becomes a borrowed `String` from inside the `Text` variant.
                         if let crate::dom::Node::Text(t) = &*child_borrow {
-                            // RUST FUNDAMENTAL: .push_str() appends &str to String (doesn't take ownership)
+                            // RUST FUNDAMENTAL: `push_str` copies bytes from a borrowed string slice into the existing `String` buffer.
                             content.push_str(t);
                         }
                     }
 
                     // Only add script if it has content
+                    // RUST FUNDAMENTAL: The `!` prefix negates a boolean, so `!content.is_empty()` means "content is not empty".
                     if !content.is_empty() {
                         // Add script content as inline script (false flag)
-                        // RUST FUNDAMENTAL: .push() moves content into Vec (ownership transfer)
+                        // RUST FUNDAMENTAL: After `push`, ownership of `content` has moved into the vector,
+                        // so this local variable can no longer be used unless it is rebuilt.
                         scripts.push((content, false));
                     }
                 }
             }
 
             // If node is any other element, recurse into children
-            // RUST FUNDAMENTAL: Catch-all pattern for non-script elements
+            // RUST FUNDAMENTAL: This is a more general element pattern that runs after the script-specific arm above.
             crate::dom::Node::Element(el) => {
                 // Walk each child of this element
-                // RUST FUNDAMENTAL: for loop over mutable collection doesn't require &mut
-                // Iteration by reference (&el.children) is default
+                // RUST FUNDAMENTAL: You do not need mutable access to iterate by shared reference.
+                // `for child in &el.children` borrows each child pointer one at a time.
                 for child in &el.children {
                     // Recursively process child nodes
-                    // RUST FUNDAMENTAL: Recursive call with same signature
-                    // Stack depth = tree depth; deep trees might overflow stack (could use iterative approach)
+                    // RUST FUNDAMENTAL: This is recursion: the function solves the big problem by calling itself on smaller subtrees.
+                    // In tree code that is often the clearest approach, though extremely deep trees can make recursion a stack concern.
                     walk(child, scripts);
                 }
             }
 
             // If node is document root, recurse into its children
-            // RUST FUNDAMENTAL: Struct variant with named field; destructure with { children }
+            // RUST FUNDAMENTAL: Named-field enum variants are destructured with struct-like syntax, even though they live inside an enum.
             crate::dom::Node::Document { children } => {
                 // Walk each top-level child
-                // RUST FUNDAMENTAL: Iteration over &[NodePtr] (slice reference)
+                // RUST FUNDAMENTAL: Borrowing a vector as a slice gives read-only access to its elements without transferring ownership.
                 for child in children {
                     // Recursively process child nodes
                     walk(child, scripts);
@@ -547,16 +635,18 @@ fn extract_scripts(node: &crate::dom::NodePtr) -> Vec<(String, bool)> {
             }
 
             // Ignore text nodes (no scripts there)
-            // RUST FUNDAMENTAL: _ is catch-all pattern; ignores the value
+            // RUST FUNDAMENTAL: The wildcard pattern means "all remaining cases".
+            // It is useful when the value itself does not matter.
             _ => {}
         }
     }
 
     // Start recursive walk from the given node
-    // RUST FUNDAMENTAL: Call inner walk() function; passes &mut scripts
+    // RUST FUNDAMENTAL: Passing `&mut scripts` means the helper can keep appending into one shared output buffer.
     walk(node, &mut scripts);
 
     // Return collected scripts vector
-    // RUST FUNDAMENTAL: Function returns scripts; moves ownership to caller
+    // RUST FUNDAMENTAL: Returning `scripts` moves ownership of the finished vector to the caller.
+    // Because Rust uses move semantics by default, no extra copy of the vector contents is made here.
     scripts
 }

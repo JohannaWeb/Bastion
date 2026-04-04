@@ -7,6 +7,7 @@
 //! The texture is stored as a flat Vec<u8> with RGBA8 format for GPU transfer.
 
 // Import HashMap for character -> metrics mapping
+// RUST FUNDAMENTAL: `HashMap` is the standard hash-table collection in Rust's standard library.
 use std::collections::HashMap;
 
 // Metrics describing where a glyph lives in the atlas and how to render it
@@ -91,6 +92,7 @@ impl GlyphAtlas {
         atlas_y: u32,
     ) {
         // Calculate stride (bytes per row) in atlas texture
+        // RUST FUNDAMENTAL: "stride" means how many storage units you skip to move down one row in a linearized 2D buffer.
         let atlas_stride = self.width * 4;
         // Stride in bitmap (not multiplied by 4 - bitmap is grayscale)
         let bitmap_stride = glyph_width;
@@ -125,6 +127,8 @@ impl GlyphAtlas {
         // Calculate normalized UV coordinates for texture sampling [0, 1]
         let uv_min = (
             // Normalize atlas X position
+            // RUST FUNDAMENTAL: Converting integer pixel coordinates to normalized UV coordinates
+            // is common when data will be sampled by GPU texture hardware.
             atlas_x as f32 / self.width as f32,
             // Normalize atlas Y position
             atlas_y as f32 / self.height as f32,
@@ -210,6 +214,8 @@ impl AtlasPacker {
         // RUST FUNDAMENTAL: &mut self.rows gives mutable iterator
         for row in &mut self.rows {
             // Check if glyph fits: enough width left and height matches
+            // RUST FUNDAMENTAL: This is a greedy packing heuristic, not an optimal search.
+            // It takes the first row that fits rather than trying every possible arrangement.
             if row.x_cursor + glyph_width <= self.width && glyph_height <= row.height {
                 // Yes, it fits - record position
                 let x = row.x_cursor;
@@ -224,6 +230,8 @@ impl AtlasPacker {
         // Glyph didn't fit in existing rows, try to create new row
         // Calculate where next row would start (below all existing rows)
         let next_y = self.rows.iter().map(|r| r.y + r.height).max().unwrap_or(0);
+        // RUST FUNDAMENTAL: `.max().unwrap_or(0)` is a common pattern when an iterator may be empty
+        // and you want a neutral fallback value.
         // Check if new row would fit vertically
         if next_y + glyph_height <= self.height {
             // Yes, create new row
@@ -239,6 +247,7 @@ impl AtlasPacker {
             return Some((x, y));
         }
 
+        // RUST FUNDAMENTAL: Returning `None` signals that packing failed without needing exceptions or sentinel coordinates.
         None
     }
 }

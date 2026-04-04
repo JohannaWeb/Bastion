@@ -1,38 +1,40 @@
 // Import DOM node types
-// RUST FUNDAMENTAL: NodePtr = Rc<RefCell<Node>>; smart pointer for cyclic graph (DOM tree)
+// RUST FUNDAMENTAL: `NodePtr` is the DOM's shared pointer type alias.
+// It hides the `Rc<RefCell<Node>>` machinery so this module can talk about nodes at a higher level.
 use crate::dom::{Node, NodePtr};
 
 // Import Boa JavaScript engine
-// RUST FUNDAMENTAL: Boa is embeddin JavaScript engine written in Rust; FFI pattern
-// FFI = Foreign Function Interface; calling external code from Rust or vice versa
-// Context manages JavaScript execution state, heap, etc.
+// RUST FUNDAMENTAL: Boa is an embeddable JavaScript engine exposed through Rust APIs.
+// The broader idea here is "host one runtime inside another system", where Rust code provides values and functions to the JS world.
+// `Context` is Boa's main execution state object, holding globals, heap-managed values, and runtime configuration.
 use boa_engine::{Context, JsResult, JsValue, NativeFunction, Source, JsString};
 
 // Import Boa object builder
-// RUST FUNDAMENTAL: Builder pattern for complex object initialization
-// ObjectInitializer fluent API: init().property(name, value).build()
+// RUST FUNDAMENTAL: The builder pattern is common when constructing objects that have many optional pieces.
+// Instead of one giant constructor, you chain configuration calls and finish with `build()`.
 use boa_engine::object::ObjectInitializer;
 
 // Import property attributes (used below)
-// RUST FUNDAMENTAL: Attributes control property behavior (readonly, writable, enumerable, etc.)
+// RUST FUNDAMENTAL: Property attributes are metadata attached to object properties.
+// They control whether a property can be changed, iterated over, deleted, and so on.
 use boa_engine::property::Attribute;
 
 // Import Boa garbage collection traits
-// RUST FUNDAMENTAL: Trace and Finalize are garbage collection traits in Boa
-// Rust's ownership model + GC marker traits = sound memory management for managed objects
+// RUST FUNDAMENTAL: Boa uses garbage collection for JS-managed values, so native Rust types participating in that world
+// may need to implement GC-related traits. `Trace` tells the collector what references need to be followed.
 use boa_gc::{Trace, Finalize, empty_trace};
 
 // Import collections for storing nodes
 use std::collections::BTreeMap;
 
 // Import Rc for shared references
-// RUST FUNDAMENTAL: Rc<T> enables multiple ownership in single thread
-// Each clone increments reference count; dropped when count reaches 0
+// RUST FUNDAMENTAL: `Rc<T>` is ideal when several Rust values need to point at the same data in single-threaded code.
+// Cloning an `Rc` is cheap because it copies the pointer and bumps the reference count instead of cloning the underlying value.
 use std::rc::Rc;
 
 // Import RefCell for interior mutability
-// RUST FUNDAMENTAL: RefCell provides runtime (not compile-time) borrow checking
-// Allows &self to return &mut T safely; panics if borrowed twice mutably
+// RUST FUNDAMENTAL: `RefCell<T>` lets code borrow mutably even when the `RefCell` itself is behind shared ownership.
+// The price is that borrow-rule violations become runtime panics instead of compile-time errors.
 use std::cell::RefCell;
 
 // Registry mapping JavaScript object IDs to DOM nodes
