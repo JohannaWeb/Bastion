@@ -1,86 +1,145 @@
+// Import CSS layout properties
 use crate::css::{AlignItems, BoxSizing, DisplayMode, EdgeSizes, FlexDirection, JustifyContent, Margin, MarginValue, StyleMap, TextAlign};
+// Import styled DOM tree
 use crate::style::{StyleTree, StyledNode};
+// Import Display formatting
 use std::fmt::{self, Display, Formatter};
 
+// Default viewport width for layout (unused, kept for reference)
 #[allow(dead_code)]
 const DEFAULT_VIEWPORT_WIDTH: f32 = 1200.0;
+// Vertical padding for block elements in layout
 const BLOCK_VERTICAL_PADDING: f32 = 6.0;
+// Average character width in pixels
 const TEXT_CHAR_WIDTH: f32 = 8.0;
+// Line height for text rendering
 const TEXT_LINE_HEIGHT: f32 = 18.0;
+// Height of inline elements
 const INLINE_BOX_HEIGHT: f32 = 16.0;
 
+// Complete layout tree with positioned boxes
 #[derive(Debug, Clone, PartialEq)]
 pub struct LayoutTree {
+    // Root box of the layout tree (viewport)
     root: LayoutBox,
 }
 
+// Single layout box with position, size, and styling
 #[derive(Debug, Clone, PartialEq)]
 pub struct LayoutBox {
+    // Type of layout box (block, inline, image, etc.)
     kind: LayoutKind,
+    // Rectangle with position and dimensions
     rect: Rect,
+    // CSS styles applied to this box
     styles: StyleMap,
+    // Margin around the box
     margin: Margin,
+    // Border width for each side
     border: EdgeSizes,
+    // Padding inside the box
     padding: EdgeSizes,
+    // Child layout boxes
     children: Vec<LayoutBox>,
 }
 
+// Enumeration of layout box types
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LayoutKind {
+    // Viewport (main rendering surface)
     Viewport,
+    // Block-level element (takes full width)
     Block { tag_name: String },
+    // Inline-block element (inline but acts as block)
     InlineBlock { tag_name: String },
+    // Inline element (flows with text)
     Inline { tag_name: String },
+    // Control element (input, button, etc.)
     Control { tag_name: String },
+    // Image element with alt text and src
     Image {
         alt: Option<String>,
         src: Option<String>,
         display_mode: DisplayMode,
     },
+    // Text node containing string content
     Text { text: String },
 }
 
+// Rectangle representing a box's position and dimensions
+// RUST FUNDAMENTAL: #[derive(Debug, Clone, Copy, PartialEq)]
+// Copy trait = automatically copy on assignment (bitwise copy); only for small stack types
+// f32 is Copy; after let r2 = r1, both r1 and r2 are valid (not moved)
+// Without Copy: let r2 = r1 would move r1, leaving it inaccessible
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rect {
+    // X coordinate (pixels from left)
+    // RUST FUNDAMENTAL: f32 is 32-bit floating point; represents coordinates with decimal precision
     pub x: f32,
+
+    // Y coordinate (pixels from top)
     pub y: f32,
+
+    // Width in pixels
     pub width: f32,
+
+    // Height in pixels
     pub height: f32,
 }
 
+// Implementation of LayoutTree
 impl LayoutTree {
+    // Create layout tree from styled tree using default viewport width
     #[allow(dead_code)]
     pub fn from_style_tree(style_tree: &StyleTree) -> Self {
+        // Delegate to method with explicit viewport width
         Self::from_style_tree_with_viewport_width(style_tree, DEFAULT_VIEWPORT_WIDTH)
     }
 
+    // Create layout tree from styled tree with specified viewport width
     pub fn from_style_tree_with_viewport_width(
+        // Styled DOM tree to layout
         style_tree: &StyleTree,
+        // Width of viewport in pixels
         viewport_width: f32,
     ) -> Self {
+        // Build layout box tree starting from styled root
         let root = LayoutBox::layout_root(style_tree.root(), viewport_width)
+            // Panic if root fails (shouldn't happen)
             .expect("style tree root must produce a viewport");
+        // Wrap root in LayoutTree
         Self { root }
     }
 
+    // Get root layout box of the tree
     pub fn root(&self) -> &LayoutBox {
+        // Return reference to root box
         &self.root
     }
 }
 
+// LayoutBox implementation with layout calculation methods
 impl LayoutBox {
+    // Create root viewport box with specified width
     fn layout_root(node: &StyledNode, viewport_width: f32) -> Option<Self> {
+        // Build layout starting from position (0,0) with full width
         let mut root = Self::from_styled_node(node, 0.0, 0.0, viewport_width)?;
+        // Set viewport width to fill available space
         root.rect.width = viewport_width;
+        // Return root box
         Some(root)
     }
 
+    // Layout a styled node recursively based on its type
     fn from_styled_node(node: &StyledNode, x: f32, y: f32, available_width: f32) -> Option<Self> {
+        // Skip style and script tags (non-visual)
         if node.tag_name() == Some("style".to_string()) || node.tag_name() == Some("script".to_string()) {
             return None;
         }
 
+        // Dispatch based on node type
         match node.tag_name() {
+            // Document node without text becomes viewport
             None if node.text().is_none() => Some(Self::layout_container(
                 LayoutKind::Viewport,
                 node.styles().clone(),
@@ -92,21 +151,33 @@ impl LayoutBox {
                 y,
                 available_width,
             )),
+            // Element node - dispatch to element handler
             Some(tag_name) => Self::from_element(&tag_name, node, x, y, available_width),
+            // Text node - layout as text
             None => Some(Self::layout_text(&node.text().unwrap_or_default(), node.styles().clone(), x, y)),
         }
     }
 
+    // Layout an element node based on display mode and tag name
     fn from_element(
+        // HTML tag name
         tag_name: &str,
+        // Styled node to layout
         node: &StyledNode,
+        // X position
         x: f32,
+        // Y position
         y: f32,
+        // Available width for layout
         available_width: f32,
     ) -> Option<Self> {
+        // Get display mode from styles
         let styles = node.styles().clone();
+        // Dispatch based on display mode and tag type
         match styles.display_mode() {
+            // Display: none means don't render
             DisplayMode::None => None,
+            // Image-like elements (img, svg, canvas, iframe)
             mode if tag_name == "img" || tag_name == "svg" || tag_name == "canvas" || tag_name == "iframe" => Some(Self::layout_image(
                 node,
                 styles,
@@ -118,6 +189,7 @@ impl LayoutBox {
                 available_width,
                 mode,
             )),
+            // Form control elements (textarea, input, button)
             _ if tag_name == "textarea" || tag_name == "input" || tag_name == "button" => Some(Self::layout_control(
                 tag_name,
                 node,
@@ -129,6 +201,7 @@ impl LayoutBox {
                 y,
                 available_width,
             )),
+            // Display: block (full width, new line)
             DisplayMode::Block => Some(Self::layout_container(
                 LayoutKind::Block {
                     tag_name: tag_name.to_string(),
@@ -142,6 +215,7 @@ impl LayoutBox {
                 y,
                 available_width,
             )),
+            // Display: inline-block (inline positioning, block box)
             DisplayMode::InlineBlock => Some(Self::layout_container(
                 LayoutKind::InlineBlock {
                     tag_name: tag_name.to_string(),
@@ -155,6 +229,7 @@ impl LayoutBox {
                 y,
                 available_width,
             )),
+            // Display: flex (flexbox layout)
             DisplayMode::Flex => Some(Self::layout_flex_container(
                 LayoutKind::Block {
                     tag_name: tag_name.to_string(),
@@ -168,6 +243,7 @@ impl LayoutBox {
                 y,
                 available_width,
             )),
+            // Display: inline (flows with text)
             DisplayMode::Inline => Some(Self::layout_inline(
                 tag_name,
                 styles,

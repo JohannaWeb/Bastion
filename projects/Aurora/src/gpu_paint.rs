@@ -1,37 +1,63 @@
+// Import layout box for rendering
 use crate::layout::LayoutBox;
+// Import Vello graphics primitives
 use vello::kurbo::{RoundedRect, Affine, Rect as KRect};
+// Import color and fill types
 use peniko::{Color, Fill};
+// Import Vello scene for GPU rendering
 use vello::Scene;
+// Import OnceLock for lazy static initialization (thread-safe)
 use std::sync::OnceLock;
+// Import Mutex for thread-safe interior mutability
 use std::sync::Mutex;
+// Import HashMap for color caching
 use std::collections::HashMap;
 
-// Cache for dominant image colors
+// Global cache for dominant image colors (lazy-initialized, thread-safe)
+// RUST FUNDAMENTAL: OnceLock<Mutex<T>> provides thread-safe lazy initialization
+// T is computed once, then Mutex protects shared access
 static IMAGE_COLOR_CACHE: OnceLock<Mutex<HashMap<String, [u8; 3]>>> = OnceLock::new();
 
+// Get or initialize the image color cache
 fn get_image_color_cache() -> &'static Mutex<HashMap<String, [u8; 3]>> {
+    // RUST FUNDAMENTAL: 'static lifetime - valid for entire program duration
+    // get_or_init() lazily initializes on first call, returns same reference thereafter
     IMAGE_COLOR_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+// GPU painter for rendering layout boxes to Vello scene
+// RUST FUNDAMENTAL: Unit struct (no data) - used for organizing methods via impl
 pub struct GpuPainter;
 
+// GpuPainter implementation
 impl GpuPainter {
+    // Paint layout box with full opacity
     pub fn paint(layout_box: &LayoutBox, scene: &mut Scene) {
+        // Delegate to opacity-aware version with 1.0 opacity
         Self::paint_with_opacity(layout_box, scene, 1.0);
     }
 
+    // Paint layout box with opacity blending through tree
+    // RUST FUNDAMENTAL: parent_opacity f32 parameter shows how Rust passes primitives by value (Copy type)
     fn paint_with_opacity(layout_box: &LayoutBox, scene: &mut Scene, parent_opacity: f32) {
+        // Get styles from layout box
         let styles = layout_box.styles();
+        // Get opacity property (0.0 to 1.0)
         let opacity = styles.opacity();
+        // Calculate effective opacity combining parent and current
         let effective_opacity = parent_opacity * opacity;
 
+        // Skip rendering if completely transparent or hidden
         if effective_opacity < 0.01 || styles.visibility() == "hidden" {
             return;
         }
 
+        // Get position and size
         let rect = layout_box.rect();
 
+        // Render based on box type
         if layout_box.is_viewport() {
+            // Viewport: fill entire background
             let bg_color = parse_color(styles.background_color().unwrap_or("white"));
             scene.fill(
                 Fill::NonZero,
@@ -41,50 +67,74 @@ impl GpuPainter {
                 &KRect::new(rect.x as f64, rect.y as f64, (rect.x + rect.width) as f64, (rect.y + rect.height) as f64),
             );
         } else if layout_box.is_image() {
+            // Image: special rendering
             paint_image(layout_box, scene);
         } else if let Some(text) = layout_box.text() {
+            // Text: render with opacity
             paint_text_with_opacity(layout_box, text, scene, effective_opacity);
         } else {
+            // Element: render with borders and background
             paint_element_with_opacity(layout_box, scene, effective_opacity);
         }
 
+        // Recursively paint children with inherited opacity
+        // RUST FUNDAMENTAL: for loop borrows children iterator
         for child in layout_box.children() {
             Self::paint_with_opacity(child, scene, effective_opacity);
         }
     }
 }
 
+// Paint an element (div, section, etc.) with background, borders, and shadow
 fn paint_element_with_opacity(layout_box: &LayoutBox, scene: &mut Scene, opacity: f32) {
+    // Get position/size rect
     let r = layout_box.rect();
+    // Get computed styles
     let styles = layout_box.styles();
 
+    // Get background color, trying multiple property names
+    // RUST FUNDAMENTAL: .or_else() chains Option<T> handling; unwrap_or() provides default
     let bg_color_name = styles.get("background-color").or_else(|| styles.get("background")).unwrap_or("transparent");
+    // Parse color string into Color object
     let mut bg_color = parse_color(bg_color_name);
 
+    // Get border color, default to black
     let mut border_color = parse_color(styles.get("border-color").unwrap_or("black"));
+    // Get border width
     let border = layout_box.styles().border_width();
 
+    // Apply opacity to colors by multiplying alpha channel
+    // RUST FUNDAMENTAL: .components[3] accesses array; *= modifies in-place
     bg_color.components[3] *= opacity;
     border_color.components[3] *= opacity;
 
+    // Parse border-radius, default to 0.0
     let radius = if let Some(radius_str) = styles.get("border-radius") {
+        // RUST FUNDAMENTAL: if let Some(x) = option unwraps Some variant
+        // trim_end_matches() removes "px" suffix, parse() converts string to f32
         radius_str.trim_end_matches("px").parse::<f32>().unwrap_or(0.0) as f64
     } else {
         0.0
     };
 
+    // Create rectangle in Vello's coordinate system
     let k_rect = KRect::new(r.x as f64, r.y as f64, (r.x + r.width) as f64, (r.y + r.height) as f64);
+    // Create rounded rectangle with border radius
     let rounded_rect = RoundedRect::from_rect(k_rect, radius);
 
+    // Paint drop shadow if present
     if let Some(shadow_str) = styles.get("box-shadow") {
         if shadow_str != "none" {
+            // Create semi-transparent black shadow color with opacity
             let shadow_color = Color::from_rgba8(0, 0, 0, ((60.0 * opacity) as u8).min(255));
+            // Shadow offset slightly down and right
             let shadow_rect = KRect::new(
                 (r.x + 3.0) as f64,
                 (r.y + 3.0) as f64,
                 (r.x + r.width + 3.0) as f64,
                 (r.y + r.height + 3.0) as f64,
             );
+            // Fill shadow rectangle on scene
             scene.fill(
                 Fill::NonZero,
                 Affine::IDENTITY,
@@ -95,6 +145,7 @@ fn paint_element_with_opacity(layout_box: &LayoutBox, scene: &mut Scene, opacity
         }
     }
 
+    // Paint background if not fully transparent
     if bg_color.components[3] > 0.0 {
         scene.fill(Fill::NonZero, Affine::IDENTITY, bg_color, None, &rounded_rect);
     }

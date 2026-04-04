@@ -1,51 +1,99 @@
+// Import DOM node types
+// RUST FUNDAMENTAL: NodePtr = Rc<RefCell<Node>>; smart pointer for cyclic graph (DOM tree)
 use crate::dom::{Node, NodePtr};
-use crate::dom::ElementNode;
+
+// Import Boa JavaScript engine
+// RUST FUNDAMENTAL: Boa is embeddin JavaScript engine written in Rust; FFI pattern
+// FFI = Foreign Function Interface; calling external code from Rust or vice versa
+// Context manages JavaScript execution state, heap, etc.
 use boa_engine::{Context, JsResult, JsValue, NativeFunction, Source, JsString};
+
+// Import Boa object builder
+// RUST FUNDAMENTAL: Builder pattern for complex object initialization
+// ObjectInitializer fluent API: init().property(name, value).build()
 use boa_engine::object::ObjectInitializer;
+
+// Import property attributes (used below)
+// RUST FUNDAMENTAL: Attributes control property behavior (readonly, writable, enumerable, etc.)
 use boa_engine::property::Attribute;
-use boa_engine::object::builtins::JsFunction;
+
+// Import Boa garbage collection traits
+// RUST FUNDAMENTAL: Trace and Finalize are garbage collection traits in Boa
+// Rust's ownership model + GC marker traits = sound memory management for managed objects
 use boa_gc::{Trace, Finalize, empty_trace};
+
+// Import collections for storing nodes
 use std::collections::BTreeMap;
+
+// Import Rc for shared references
+// RUST FUNDAMENTAL: Rc<T> enables multiple ownership in single thread
+// Each clone increments reference count; dropped when count reaches 0
 use std::rc::Rc;
+
+// Import RefCell for interior mutability
+// RUST FUNDAMENTAL: RefCell provides runtime (not compile-time) borrow checking
+// Allows &self to return &mut T safely; panics if borrowed twice mutably
 use std::cell::RefCell;
 
+// Registry mapping JavaScript object IDs to DOM nodes
 #[derive(Clone)]
 struct NodeRegistry {
+    // Map of object ID to DOM node pointers
     nodes: Rc<RefCell<BTreeMap<u32, NodePtr>>>,
+    // Counter for assigning unique IDs
     next_id: Rc<RefCell<u32>>,
 }
 
+// Implement garbage collection traits for registry
 unsafe impl Trace for NodeRegistry {
+    // Empty trace: Rc/RefCell are not traced in Boa
     empty_trace!();
 }
+// Implement finalizer (no cleanup needed)
 impl Finalize for NodeRegistry {}
 
+// Captured reference to a DOM node in JavaScript context
 #[derive(Clone)]
 struct NodeCapture {
+    // Reference to DOM node
     node: NodePtr,
+    // Reference to node registry
     registry: NodeRegistry,
 }
 
+// Implement garbage collection traits for node capture
 unsafe impl Trace for NodeCapture {
+    // Empty trace for this native type
     empty_trace!();
 }
+// Implement finalizer
 impl Finalize for NodeCapture {}
 
+// Captured reference to document node in JavaScript
 #[derive(Clone)]
 struct DocCapture {
+    // Reference to document root node
     document: NodePtr,
+    // Reference to node registry
     registry: NodeRegistry,
 }
 
+// Implement garbage collection traits for document capture
 unsafe impl Trace for DocCapture {
+    // Empty trace for this native type
     empty_trace!();
 }
+// Implement finalizer
 impl Finalize for DocCapture {}
 
+// Boa JavaScript runtime wrapping context and DOM
 pub struct BoaRuntime {
+    // JavaScript execution context
     context: Context,
+    // Document node (kept but not directly used)
     #[allow(dead_code)]
     document: NodePtr,
+    // Registry mapping JS objects to DOM nodes
     registry: NodeRegistry,
 }
 

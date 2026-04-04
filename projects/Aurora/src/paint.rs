@@ -1,53 +1,90 @@
+// Import layout types for rendering
 use crate::layout::{LayoutBox, LayoutTree, Rect};
+// Import Display formatting
 use std::fmt::{self, Display, Formatter};
 
+// Character cell dimensions in pixels for ASCII rendering
 const CELL_WIDTH_PX: f32 = 6.0;
 const CELL_HEIGHT_PX: f32 = 10.0;
 
+// Frame buffer for character-based rendering (text mode)
+// RUST FUNDAMENTAL: #[derive(Debug, Clone, PartialEq, Eq)] - derives common traits
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrameBuffer {
+    // Character grid width
     width: usize,
+    // Character grid height
     height: usize,
+    // Character buffer: width * height elements
+    // RUST FUNDAMENTAL: Vec<char> - heap-allocated, owned buffer of Unicode characters
     cells: Vec<char>,
 }
 
+// ASCII text renderer using character cell grid
 pub struct Painter;
 
+// Painter implementation for text rendering
 impl Painter {
+    // Paint layout tree to character framebuffer
     pub fn paint(layout_tree: &LayoutTree) -> FrameBuffer {
+        // Get root layout box
         let root = layout_tree.root();
+        // Get root's position and size
         let rect = root.rect();
+        // Calculate grid dimensions from pixels
         let width = (rect.width / CELL_WIDTH_PX).ceil().max(1.0) as usize;
         let height = (rect.height / CELL_HEIGHT_PX).ceil().max(1.0) as usize;
+        // Create empty framebuffer
         let mut framebuffer = FrameBuffer::new(width, height);
 
+        // Recursively paint layout boxes to framebuffer
         paint_box(root, &mut framebuffer);
 
+        // Return populated framebuffer
         framebuffer
     }
 }
 
+// FrameBuffer implementation with text rendering methods
+// RUST FUNDAMENTAL: impl FrameBuffer provides methods for the FrameBuffer struct
+// Methods take &self (read-only), &mut self (mutable), or no self (associated functions)
 impl FrameBuffer {
+    // Create new framebuffer filled with spaces
+    // RUST FUNDAMENTAL: fn new() -> Self is constructor pattern; returns instance of Self
     fn new(width: usize, height: usize) -> Self {
         Self {
             width,
             height,
+            // RUST FUNDAMENTAL: vec![' '; width * height] - create vec with repeated value
+            // Allocates width*height spaces on heap (all initialized to ' ')
+            // Similar to: std::vector<char>(width * height, ' ') in C++
+            // More efficient than vec![].resize(size, ' ')
             cells: vec![' '; width * height],
         }
     }
 
+    // Set character at grid position
+    // RUST FUNDAMENTAL: &mut self - takes mutable borrow to allow modification
     fn set(&mut self, x: usize, y: usize, value: char) {
+        // Bounds check to prevent out-of-bounds access
         if x < self.width && y < self.height {
+            // RUST FUNDAMENTAL: y * self.width + x converts 2D to 1D index
+            // This is row-major indexing: row_index * stride + column_index
             self.cells[y * self.width + x] = value;
         }
     }
 
+    // Fill rectangle region with a character
     fn fill_rect(&mut self, rect: Rect, value: char) {
+        // Convert pixel coordinates to cell coordinates
         let x0 = (rect.x / CELL_WIDTH_PX).floor().max(0.0) as usize;
         let y0 = (rect.y / CELL_HEIGHT_PX).floor().max(0.0) as usize;
+        // Calculate end coordinates
         let x1 = ((rect.x + rect.width) / CELL_WIDTH_PX).ceil().max(0.0) as usize;
         let y1 = ((rect.y + rect.height) / CELL_HEIGHT_PX).ceil().max(0.0) as usize;
 
+        // Fill all cells in rectangle
+        // RUST FUNDAMENTAL: ..range creates iterator; y0..y1 doesn't include y1
         for y in y0..y1.min(self.height) {
             for x in x0..x1.min(self.width) {
                 self.set(x, y, value);
@@ -55,36 +92,50 @@ impl FrameBuffer {
         }
     }
 
+    // Draw text string starting at rectangle position
     fn draw_text(&mut self, rect: Rect, text: &str) {
+        // Convert rectangle x,y to cell coordinates
         let x0 = (rect.x / CELL_WIDTH_PX).floor().max(0.0) as usize;
         let y0 = (rect.y / CELL_HEIGHT_PX).floor().max(0.0) as usize;
 
+        // Skip if y position is completely off-screen
         if y0 >= self.height {
             return;
         }
 
+        // Draw each character across the row
+        // RUST FUNDAMENTAL: .enumerate() provides (index, char) tuples
         for (offset, ch) in text.chars().enumerate() {
+            // Calculate x position
             let x = x0 + offset;
+            // Stop if we run off the right edge
             if x >= self.width {
                 break;
             }
+            // Draw character
             self.set(x, y0, ch);
         }
     }
 
+    // Draw box outline with corner and edge characters
     fn draw_outline(&mut self, rect: Rect, corner: char, horizontal: char, vertical: char) {
+        // Convert to cell coordinates
         let x0 = (rect.x / CELL_WIDTH_PX).floor().max(0.0) as usize;
         let y0 = (rect.y / CELL_HEIGHT_PX).floor().max(0.0) as usize;
+        // Calculate right and bottom edges
         let x1_f = (rect.x + rect.width) / CELL_WIDTH_PX;
         let y1_f = (rect.y + rect.height) / CELL_HEIGHT_PX;
+        // Handle fractional coordinates (round up if partial cell)
         let x1 = if x1_f.fract() > 0.0 { x1_f.ceil() as usize } else { x1_f as usize }.saturating_sub(1).max(x0);
         let y1 = if y1_f.fract() > 0.0 { y1_f.ceil() as usize } else { y1_f as usize }.saturating_sub(1).max(y0);
 
+        // Skip if box is completely off-screen or invalid
         if x0 >= self.width || y0 >= self.height || x1 < x0 || y1 < y0 {
             return;
         }
 
-        // Top and bottom edges
+        // Draw top and bottom horizontal edges
+        // RUST FUNDAMENTAL: ..=range includes both endpoints
         for x in x0..=x1.min(self.width - 1) {
             self.set(x, y0, horizontal);
             if y1 < self.height {
@@ -92,7 +143,7 @@ impl FrameBuffer {
             }
         }
 
-        // Left and right edges
+        // Draw left and right vertical edges
         for y in y0..=y1.min(self.height - 1) {
             self.set(x0, y, vertical);
             if x1 < self.width {
@@ -100,7 +151,7 @@ impl FrameBuffer {
             }
         }
 
-        // Corners
+        // Draw corners (overwrite edges)
         self.set(x0, y0, corner);
         if x1 < self.width {
             self.set(x1, y0, corner);
@@ -113,27 +164,39 @@ impl FrameBuffer {
         }
     }
 
+    // Draw label text at specific cell position
     fn draw_label_at_cell(&mut self, cell_x: usize, cell_y: usize, label: &str) {
+        // Skip if y is off-screen
         if cell_y >= self.height {
             return;
         }
 
+        // Draw each character
         for (offset, ch) in label.chars().enumerate() {
+            // Calculate x position
             let x = cell_x + offset;
+            // Stop if x is off-screen
             if x >= self.width {
                 break;
             }
+            // Draw character
             self.set(x, cell_y, ch);
         }
     }
 }
 
+// Trait implementation to print framebuffer as string
 impl Display for FrameBuffer {
+    // Format framebuffer by joining cells into lines
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // RUST FUNDAMENTAL: .chunks(self.width) creates iterator over rows
         for row in self.cells.chunks(self.width) {
+            // RUST FUNDAMENTAL: .collect::<String>() joins chars into string
             let line = row.iter().collect::<String>();
+            // Write line, trimming trailing spaces
             writeln!(f, "{}", line.trim_end_matches(' '))?;
         }
+        // Return ok result
         Ok(())
     }
 }

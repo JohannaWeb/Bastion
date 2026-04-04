@@ -1,33 +1,56 @@
+// Import layout tree for rendering
 use crate::layout::LayoutTree;
+// Import GPU painter for Vello rendering
 use crate::gpu_paint::GpuPainter;
+// Import Arc for thread-safe sharing
 use std::sync::Arc;
+// Import Vello graphics primitives
 use vello::{
+    // Import Affine for transformation matrices
     kurbo::Affine,
+    // Import color and fill types
     peniko::{Color, Fill},
+    // Import render context and surface for GPU rendering
     util::{RenderContext, RenderSurface},
+    // Import WebGPU backend
     wgpu,
+    // Import Vello renderer and scene
     Renderer, RendererOptions, Scene,
 };
+// Import Winit window event handling
 use winit::{
+    // Import window event types
     event::{ElementState, KeyEvent, WindowEvent},
+    // Import event loop
     event_loop::EventLoop,
+    // Import keyboard key types
     keyboard::{Key, NamedKey},
+    // Import Window type
     window::Window,
 };
 
+// Open interactive window for rendering layout
 pub fn open(layout: &LayoutTree) -> Result<(), String> {
-    // Check if we should render to file instead of window
+    // Check environment variable for screenshot output path
     let screenshot_path = std::env::var("AURORA_SCREENSHOT");
+    // If screenshot path provided, render to file instead of window
     if let Ok(path) = screenshot_path {
+        // Render layout to PNG file
         render_to_file(layout, &path);
+        // Return success
         return Ok(());
     }
 
+    // Create new event loop for window events
     let event_loop = EventLoop::new().map_err(|error| format!("failed to create event loop: {error}"))?;
+    // Create Aurora application state with layout
     let mut app = AuroraApp::new(layout);
 
+    // Run event loop with application
     event_loop
+        // Run the application
         .run_app(&mut app)
+        // Map errors to string format
         .map_err(|error| format!("failed to run event loop: {error}"))
 }
 

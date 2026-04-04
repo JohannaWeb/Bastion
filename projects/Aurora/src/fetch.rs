@@ -1,36 +1,80 @@
+// Import TLS server name parsing
 use rustls::pki_types::ServerName;
+// Import TLS client configuration and connections
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
+// Import trusted CA certificate roots for HTTPS validation
 use webpki_roots::TLS_SERVER_ROOTS;
+// Import path handling types
 use std::path::{Path, PathBuf};
+// Import Display/Formatter for error messages
 use std::fmt::{self, Display, Formatter};
+// Import Read and Write traits for socket I/O
 use std::io::{Read, Write};
+// Import TCP stream for network connections
 use std::net::TcpStream;
+// Import Arc for shared pointer to TLS config
 use std::sync::Arc;
 
+// Maximum number of HTTP redirects to follow before giving up
 const MAX_REDIRECTS: usize = 5;
 
+// Enum representing HTTP or HTTPS scheme
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Scheme {
+    // HTTP (unencrypted)
     Http,
+    // HTTPS (TLS encrypted)
     Https,
 }
 
+// Parsed URL components for network requests
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedUrl {
+    // HTTP or HTTPS scheme
     scheme: Scheme,
+    // Hostname (domain)
     host: String,
+    // Port number (80 for HTTP, 443 for HTTPS)
     port: u16,
+    // Path and query string components
     path_and_query: String,
 }
 
+// Error types that can occur during fetching
+// RUST FUNDAMENTAL: Enum representing different error variants
+// Using enum instead of exception throwing; encourages explicit error handling
+// Caller must pattern match or use ?, .unwrap(), .expect(), etc.
 #[derive(Debug)]
 pub enum FetchError {
+    // Unknown URL scheme (not http or https)
+    // RUST FUNDAMENTAL: Enum variant with associated data (String)
+    // Access with: FetchError::UnsupportedScheme(scheme) in match arms
     UnsupportedScheme(String),
+
+    // Malformed URL string
     InvalidUrl(String),
+
+    // I/O error (network socket)
+    // RUST FUNDAMENTAL: Wrapping external error type (std::io::Error)
+    // Allows converting I/O errors into FetchError via From/Into traits
     Io(std::io::Error),
+
+    // TLS/HTTPS error
+    // RUST FUNDAMENTAL: Wrapping rustls::Error for nested error types
+    // Error chaining preserves context; caller can inspect root cause
     Tls(rustls::Error),
+
+    // Invalid HTTP response format
     InvalidResponse(String),
+
+    // HTTP error status code with reason
+    // RUST FUNDAMENTAL: Tuple variant with multiple fields
+    // Distinguishes between types and values: (status_code, reason_phrase)
     HttpStatus(u16, String),
+
+    // Too many redirects encountered
+    // RUST FUNDAMENTAL: Unit variant with no associated data
+    // Signals specific error condition without extra information
     TooManyRedirects,
 }
 

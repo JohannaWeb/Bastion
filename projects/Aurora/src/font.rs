@@ -3,67 +3,113 @@
 //! This module provides TrueType font loading, shaping via rustybuzz,
 //! and a unified glyph atlas for efficient GPU rendering.
 
+// Import OnceLock for lazy static initialization
+// RUST FUNDAMENTAL: OnceLock<T> provides thread-safe lazy initialization
+// First call to .get_or_init() runs closure; subsequent calls return cached value
+// Perfect for expensive initialization (font parsing) that should happen once
 use std::sync::OnceLock;
+
+// Import glyph atlas and packer
+// RUST FUNDAMENTAL: Using internal crate modules via crate:: prefix (absolute path from root)
 use crate::atlas::{GlyphAtlas, AtlasPacker};
+
+// Import font and scaling types from ab_glyph
+// RUST FUNDAMENTAL: ab_glyph provides font rasterization; abstracts low-level font operations
+// Font trait allows multiple implementations (FontRef here, others possible)
 use ab_glyph::{Font, FontRef, PxScale};
+
+// Import font shaping from rustybuzz
+// RUST FUNDAMENTAL: rustybuzz provides text shaping (complex scripts, ligatures, etc.)
+// Shape converts Unicode text -> positioned glyphs using font features
 use rustybuzz::{Face, UnicodeBuffer, shape};
 
-// Global glyph atlas initialized on first use
+// Global glyph atlas (lazily initialized on first access)
 static GLYPH_ATLAS: OnceLock<GlyphAtlas> = OnceLock::new();
+// Embedded TTF font file (binary data)
 static FONT_DATA: &[u8] = include_bytes!("../fonts/default.ttf");
+// Cached font face for shaping (rustybuzz)
 static FONT_FACE: OnceLock<Face<'static>> = OnceLock::new();
 
+// Font size in pixels for pre-baking glyph atlas
 const ATLAS_BASE_SIZE: f32 = 32.0;
 
+// Get or initialize font face for text shaping (uses rustybuzz)
 fn get_font_face() -> &'static Face<'static> {
+    // Initialize on first call, reuse thereafter
     FONT_FACE.get_or_init(|| {
+        // Parse font data as TrueType font
         Face::from_slice(FONT_DATA, 0).expect("Failed to parse font for shaping")
     })
 }
 
+// Get font reference for glyph rendering (uses ab_glyph)
 fn get_ab_font() -> FontRef<'static> {
+    // Parse embedded font data for rendering
     FontRef::try_from_slice(FONT_DATA).expect("Failed to parse font for rasterization")
 }
 
+// Builder for creating pre-baked glyph atlas
 pub struct AtlasBuilder;
 
+// Implementation of atlas builder
 impl AtlasBuilder {
-    /// Build the pre-baked glyph atlas for ASCII + extended (0-255)
+    // Build a pre-rasterized glyph atlas for common characters (0-255)
     pub fn build() -> GlyphAtlas {
+        // Use base size for atlas glyphs
         let base_size = ATLAS_BASE_SIZE;
+        // Load font for rasterization
         let font = get_ab_font();
+        // Create scale for font rendering
         let scale = PxScale::from(base_size);
 
+        // Atlas dimensions (1024x1024)
         let atlas_width = 1024;
         let atlas_height = 1024;
+        // Create new empty atlas
         let mut atlas = GlyphAtlas::new(atlas_width, atlas_height);
+        // Create packer for placing glyphs in atlas
         let mut packer = AtlasPacker::new(atlas_width, atlas_height);
 
-        // Rasterize common characters (0-255)
+        // Pre-rasterize all ASCII and extended ASCII characters
         for code in 0u32..256 {
+            // Convert code point to character
             if let Some(ch) = char::from_u32(code) {
+                // Get glyph ID for this character
                 let glyph_id = font.glyph_id(ch);
+                // Get scaled glyph
                 let glyph = glyph_id.with_scale(scale);
-                
+
+                // Try to get glyph outline
                 if let Some(outline) = font.outline_glyph(glyph) {
+                    // Get glyph bounding box
                     let bounds = outline.px_bounds();
+                    // Calculate bitmap width
                     let width = bounds.width() as u32;
+                    // Calculate bitmap height
                     let height = bounds.height() as u32;
-                    
+
+                    // Only process glyphs with non-zero dimensions
                     if width > 0 && height > 0 {
+                        // Create bitmap buffer for glyph
                         let mut bitmap = vec![0u8; (width * height) as usize];
+                        // Rasterize glyph outline to bitmap
                         outline.draw(|x, y, v| {
+                            // Calculate pixel index
                             let idx = (y * width + x) as usize;
+                            // Set alpha value (0-255)
                             if idx < bitmap.len() {
                                 bitmap[idx] = (v * 255.0) as u8;
                             }
                         });
 
+                        // Try to pack glyph in atlas
                         if let Some((atlas_x, atlas_y)) = packer.pack(width, height) {
-                            // Scale factor from font units to pixels for atlas
+                            // Get font's units per em for scaling
                             let upem = font.units_per_em().unwrap_or(1000.0);
+                            // Calculate character advance width
                             let advance = font.h_advance_unscaled(glyph_id) * (base_size / upem);
-                            
+
+                            // Register glyph in atlas with its metrics
                             atlas.register_glyph(
                                 ch,
                                 &bitmap,
@@ -78,9 +124,12 @@ impl AtlasBuilder {
                         }
                     }
                 } else if ch == ' ' {
-                    // Space has no outline but has advance
+                    // Space character has no outline but has advance width
+                    // Get font's units per em
                     let upem = font.units_per_em().unwrap_or(1000.0);
+                    // Calculate space advance
                     let advance = font.h_advance_unscaled(glyph_id) * (base_size / upem);
+                    // Register space with zero bitmap
                     atlas.register_glyph(
                         ch,
                         &[],
@@ -93,77 +142,114 @@ impl AtlasBuilder {
             }
         }
 
+        // Return fully populated atlas
         atlas
     }
 }
 
+// Get or initialize global glyph atlas
 fn get_glyph_atlas() -> &'static GlyphAtlas {
+    // Initialize atlas on first call, reuse thereafter
     GLYPH_ATLAS.get_or_init(AtlasBuilder::build)
 }
 
+// Get glyph metrics from atlas for a character
 pub fn get_glyph_metrics(ch: char) -> Option<crate::atlas::GlyphMetrics> {
+    // Get the global atlas
     let atlas = get_glyph_atlas();
+    // Look up metrics for character
     atlas.get_glyph(ch)
 }
 
+// Measure text width at given font size
 pub fn measure_text(text: &str, font_size: f32) -> f32 {
-    // Keep layout width deterministic even though rendering uses shaped glyphs.
+    // Calculate width as character count times font size
+    // Note: uses simple character count, not shaped glyph advances
     text.chars().count() as f32 * font_size
 }
 
+// Rasterized glyph data
 #[derive(Debug, Clone)]
 pub struct RasterGlyph {
+    // Glyph bitmap width
     pub width: u32,
+    // Glyph bitmap height
     pub height: u32,
+    // Horizontal offset from baseline
     pub x_offset: i32,
+    // Vertical offset from baseline
     pub y_offset: i32,
+    // RGBA8 bitmap data
     pub bitmap: Vec<u8>,
 }
 
+// Single glyph positioned in a text run
 #[derive(Debug, Clone)]
 pub struct PositionedGlyph {
+    // Character being rendered
     pub ch: char,
+    // X position in text run
     pub x: f32,
+    // Y offset from baseline
     pub y_offset: f32,
 }
 
+// Laid-out sequence of glyphs
 #[derive(Debug, Clone)]
 pub struct TextRun {
+    // Vector of positioned glyphs
     pub glyphs: Vec<PositionedGlyph>,
+    // Total width of text run
     pub width: f32,
 }
 
+// Layout text using font shaping with proper glyph positioning
 pub fn layout_text_run(text: &str, font_size: f32) -> TextRun {
+    // Get font face for shaping
     let face = get_font_face();
+    // Create Unicode buffer for shaping input
     let mut buffer = UnicodeBuffer::new();
+    // Add text to buffer
     buffer.push_str(text);
-    
-    // Perform shaping
+
+    // Perform text shaping (converts characters to glyphs with positioning)
     let glyph_buffer = shape(face, &[], buffer);
+    // Get shaped glyph info
     let infos = glyph_buffer.glyph_infos();
+    // Get glyph positions (x_advance, x_offset, y_offset)
     let positions = glyph_buffer.glyph_positions();
-    
+
+    // Initialize result glyph vector
     let mut glyphs = Vec::new();
+    // Track cursor position as we layout glyphs
     let mut cursor_x = 0.0;
-    
-    // Scale factor from font units to pixels
+
+    // Calculate scale factor from font units to pixels
     let upem = face.units_per_em() as f32;
     let scale = font_size / upem;
-    
+
+    // Collect characters for lookup
     let text_chars: Vec<char> = text.chars().collect();
-    
+
+    // Process each shaped glyph
     for (i, (_info, pos)) in infos.iter().zip(positions.iter()).enumerate() {
+        // Get character for this glyph
         let ch = text_chars.get(i).copied().unwrap_or(' ');
-        
+
+        // Create positioned glyph with offsets
         glyphs.push(PositionedGlyph {
             ch,
+            // X position is cursor plus x offset
             x: cursor_x + (pos.x_offset as f32 * scale),
+            // Y offset for positioning (subscripts, etc.)
             y_offset: pos.y_offset as f32 * scale,
         });
-        
+
+        // Advance cursor by glyph advance
         cursor_x += pos.x_advance as f32 * scale;
     }
 
+    // Return text run with glyphs and total width
     TextRun {
         glyphs,
         width: cursor_x,

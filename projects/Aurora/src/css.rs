@@ -1,26 +1,57 @@
+// Import DOM node types
 use crate::dom::{Node, NodePtr};
+// Import BTreeMap for sorted attribute storage
 use std::collections::BTreeMap;
+// Import Display traits for formatting
 use std::fmt::{self, Display, Formatter};
 
+// Data structure representing an HTML element for CSS selector matching
+// RUST FUNDAMENTAL: #[derive(Debug, Clone, PartialEq, Eq, Default)] derives multiple traits:
+// - Debug: enables {:?} formatting (useful for debugging)
+// - Clone: provides .clone() method for deep copies
+// - PartialEq, Eq: enable == and != operators
+// - Default: provides Default::default() constructor (all fields default-initialized)
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ElementData {
+    // The element's tag name (e.g., "div", "p")
+    // RUST FUNDAMENTAL: String is owned heap-allocated UTF-8; cheaper than cloning &str repeatedly
     pub tag_name: String,
+
+    // Map of element attributes (id, class, data-*, etc.)
+    // RUST FUNDAMENTAL: BTreeMap<K, V> vs HashMap<K, V> - BTreeMap maintains insertion order
+    // CSS cascade needs order for specificity; BTreeMap provides deterministic iteration
     pub attributes: BTreeMap<String, String>,
 }
 
+// CSS stylesheet containing rules and CSS custom properties
+// RUST FUNDAMENTAL: pub struct allows direct field access via dot notation (pub = public)
 pub struct Stylesheet {
+    // Vector of CSS rules with selectors and declarations
+    // RUST FUNDAMENTAL: Vec<Rule> is growable array; supports .iter(), .push(), .extend()
+    // Rules are stored in document order for specificity calculation
     pub rules: Vec<Rule>,
-    pub variables: BTreeMap<String, String>,  // CSS custom properties (--name: value)
+
+    // Map of CSS custom properties like --name: value
+    // RUST FUNDAMENTAL: CSS variables (custom properties) stored in BTreeMap for ordered iteration
+    // CSS custom properties cascade; order matters for inheritance/overrides
+    pub variables: BTreeMap<String, String>,
 }
 
+// Stylesheet implementation
 impl Stylesheet {
+    // Merge another stylesheet's rules and variables into this one
     pub fn merge(&mut self, other: Stylesheet) {
+        // Extend rules vector with rules from other stylesheet
         self.rules.extend(other.rules);
+        // Extend variables map with variables from other stylesheet
         self.variables.extend(other.variables);
     }
 
+    // Create default browser user-agent stylesheet with sensible defaults
     pub fn user_agent_stylesheet() -> Self {
+        // Parse built-in CSS rules that browsers apply by default
         Self::parse(
+            // CSS string with default display modes for common tags
             "a, abbr, b, bdo, big, br, cite, code, dfn, em, i, img, input, kbd, label, map, object, output, q, samp, select, small, span, strong, sub, sup, textarea, time, tt, var { display: inline; } \
              b, strong { font-weight: bold; color: accent; } \
              i, em { font-style: italic; color: rust; } \
@@ -33,67 +64,93 @@ impl Stylesheet {
         )
     }
 
+    // Parse CSS stylesheet source string into rules and variables
     pub fn parse(source: &str) -> Self {
+        // Initialize result vectors
         let mut rules = Vec::new();
+        // Map for CSS custom properties (variables)
         let mut variables = BTreeMap::new();
 
-        // Strip @media, @keyframes, @font-face, etc. before splitting on '}'
+        // Remove @media, @keyframes, @font-face and other at-rules first
         let stripped = strip_at_rules(source);
 
+        // Split on '}' to separate rule blocks, tracking source order
         for (source_order, chunk) in stripped.split('}').enumerate() {
+            // Trim whitespace from chunk
             let chunk = chunk.trim();
+            // Skip empty chunks
             if chunk.is_empty() {
                 continue;
             }
 
+            // Split selectors and declarations on '{'
             let Some((selector_part, declarations_part)) = chunk.split_once('{') else {
+                // Skip malformed rules
                 continue;
             };
 
+            // Trim selector part
             let selector_part = selector_part.trim();
+            // Parse declarations (property: value pairs)
             let declarations = declarations_part
+                // Split on ';' to get individual declarations
                 .split(';')
+                // Parse each declaration, filtering out empty ones
                 .filter_map(|declaration| {
+                    // Trim declaration
                     let declaration = declaration.trim();
+                    // Skip empty declarations
                     if declaration.is_empty() {
                         return None;
                     }
 
+                    // Split on ':' to separate property name and value
                     let (name, value) = declaration.split_once(':')?;
+                    // Trim and keep property name
                     let name = name.trim().to_string();
-                    // Strip !important before storing
+                    // Trim value and remove !important flag
                     let value = value.trim().trim_end_matches("!important").trim().to_string();
 
-                    // Collect CSS custom properties from :root, *, and html selectors
+                    // Store CSS custom properties (var definitions like --color: blue)
                     if name.starts_with("--") && matches!(selector_part, ":root" | "*" | "html") {
                         variables.insert(name.clone(), value.clone());
                     }
 
+                    // Return parsed declaration
                     Some(Declaration { name, value })
                 })
+                // Collect all declarations into vec
                 .collect::<Vec<_>>();
 
+            // Skip rules with no declarations
             if declarations.is_empty() {
                 continue;
             }
 
-            // Split on commas to handle comma-separated selectors
+            // Handle comma-separated selectors (e.g., "h1, h2, h3 { ... }")
             for selector_str in selector_part.split(',') {
+                // Trim each selector
                 let selector_str = selector_str.trim();
+                // Skip empty selectors
                 if selector_str.is_empty() {
                     continue;
                 }
 
+                // Parse selector into selector object
                 if let Some(selector) = Selector::parse(selector_str) {
+                    // Create rule with selector and declarations
                     rules.push(Rule {
                         selector,
+                        // Clone declarations for each selector
                         declarations: declarations.clone(),
+                        // Track source order for cascade
                         source_order,
                     });
                 }
             }
         }
 
+        // Return stylesheet with rules and variables
         Self { rules, variables }
     }
 
