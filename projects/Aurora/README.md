@@ -1,5 +1,8 @@
 # Aurora
 
+<img width="1238" height="939" alt="image" src="https://github.com/user-attachments/assets/647ddace-cbdc-4ed9-9e5b-bf45a2dad9fa" />
+
+
 Aurora is a from-scratch Rust browser-engine experiment for the Bastion project.
 
 It is not a complete browser. The current codebase implements a narrow rendering slice because I wanted to explore layout, painting, and client-surface ideas without leaning on Chromium or a WebView.
