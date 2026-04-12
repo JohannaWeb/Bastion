@@ -131,15 +131,24 @@ def main() -> None:
 
     print(f"\nCloning {len(top_crates)} crates...")
     success_count = 0
+    failed_crates = []
     for i, (crate_name, repo_url) in enumerate(top_crates, 1):
         if checkout_crate(crate_name, repo_url, checkout_dir):
             success_count += 1
+        else:
+            failed_crates.append(crate_name)
         if i % 50 == 0:
-            print(f"Progress: {i}/{len(top_crates)} ({success_count} cloned)\n")
+            print(f"Progress: {i}/{len(top_crates)} ({success_count} cloned, {len(failed_crates)} failed)\n")
 
     print(f"\n✓ Completed: {success_count}/{len(top_crates)} crates cloned")
     print(f"✓ Cloned to: {checkout_dir.resolve()}")
-    print(f"\nNext step: Add to config.yaml and run build_corpus.py")
+    if failed_crates:
+        print(f"\n⚠ {len(failed_crates)} crates failed to clone (will be skipped):")
+        for crate in failed_crates[:20]:  # Show first 20
+            print(f"  - {crate}")
+        if len(failed_crates) > 20:
+            print(f"  ... and {len(failed_crates) - 20} more")
+    print(f"\nNext step: Run build_corpus.py to include cloned crates")
 
 
 if __name__ == "__main__":

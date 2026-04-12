@@ -1,5 +1,7 @@
 # Attention Is All You Need, But All You Can't Afford | Hybrid Attention
 
+Repo : https://codeberg.org/JohannaJuntos/Sisyphus
+
 I’ve been building a small Rust-focused language model from scratch in PyTorch and wanted to share the current state.
 
 This is not a finetune. It is a byte-level model trained from random init on a Rust-heavy corpus assembled in this repo.

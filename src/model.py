@@ -30,6 +30,10 @@ class GPTConfig:
     use_kv_cache: bool = False
     window_size: int = 256
     fractal_depth: int = 2
+    # Multi-Token Prediction
+    mtp_max_k: int = 0
+    mtp_share_unembedding: bool = False
+    mtp_label_smoothing: float = 0.0
 
 
 class KVCache:
@@ -374,6 +378,21 @@ class Block(nn.Module):
         return x
 
 
+class MTPHead(nn.Module):
+    """Extra prediction head for Multi-Token Prediction at offset k."""
+
+    def __init__(self, n_embd: int, vocab_size: int, shared_weight: torch.Tensor | None = None) -> None:
+        super().__init__()
+        self.proj = nn.Linear(n_embd, n_embd, bias=False)
+        self.ln = nn.LayerNorm(n_embd)
+        self.out = nn.Linear(n_embd, vocab_size, bias=False)
+        if shared_weight is not None:
+            self.out.weight = shared_weight
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.out(self.ln(self.proj(x)))
+
+
 class ByteGPT(nn.Module):
     def __init__(self, config: GPTConfig) -> None:
         super().__init__()
@@ -390,6 +409,13 @@ class ByteGPT(nn.Module):
         self.register_buffer('_position_ids', torch.arange(config.block_size))
 
         self.apply(self._init_weights)
+
+        # Multi-Token Prediction heads
+        self.mtp_heads = nn.ModuleList()
+        if config.mtp_max_k > 0:
+            for _ in range(config.mtp_max_k):
+                shared_w = self.lm_head.weight if config.mtp_share_unembedding else None
+                self.mtp_heads.append(MTPHead(config.n_embd, config.vocab_size, shared_weight=shared_w))
 
     def _init_weights(self, module: nn.Module) -> None:
         if isinstance(module, nn.Linear):
@@ -423,10 +449,50 @@ class ByteGPT(nn.Module):
 
         loss = None
         if targets is not None:
-            loss = F.cross_entropy(
+            ntp_loss = F.cross_entropy(
                 logits.view(batch * steps, self.config.vocab_size),
                 targets.view(batch * steps),
             )
+            loss = ntp_loss
+            head_losses = {"ntp": ntp_loss.detach().item()}
+            head_entropies = {}
+
+            # Compute NTP entropy for collapse detection
+            ntp_probs = F.softmax(logits, dim=-1)
+            ntp_entropy = -(ntp_probs * torch.log(ntp_probs + 1e-10)).sum(dim=-1).mean()
+            head_entropies["ntp"] = ntp_entropy.detach().item()
+
+            # Multi-Token Prediction: compute losses and entropies for extra heads
+            active_k: int = getattr(self, '_active_k', 0)
+            if active_k > 0 and self.mtp_heads:
+                mtp_weight: float = getattr(self, '_mtp_head_weight', 0.3)
+                for i, head in enumerate(self.mtp_heads[:active_k]):
+                    offset = i + 1
+                    if steps - offset < 1:
+                        break
+                    head_logits = head(x[:, :steps - offset])  # (B, T-offset, V)
+                    head_targets = targets[:, offset:]           # (B, T-offset)
+                    head_loss = F.cross_entropy(
+                        head_logits.reshape(-1, self.config.vocab_size),
+                        head_targets.reshape(-1),
+                        label_smoothing=self.config.mtp_label_smoothing,
+                    )
+                    loss = loss + mtp_weight * head_loss
+                    head_losses[f"mtp_{offset}"] = head_loss.detach().item()
+
+                    # Compute entropy for this head
+                    head_probs = F.softmax(head_logits, dim=-1)
+                    head_entropy = -(head_probs * torch.log(head_probs + 1e-10)).sum(dim=-1).mean()
+                    head_entropies[f"mtp_{offset}"] = head_entropy.detach().item()
+
+            # Expose per-head losses and entropies for logging
+            self._last_head_losses = head_losses
+            self._last_head_entropies = head_entropies
+
+        # Cache hidden states for speculative decoding
+        if use_cache:
+            self._last_hidden = x.detach()
+
         return logits, loss
 
     @torch.no_grad()
@@ -437,6 +503,7 @@ class ByteGPT(nn.Module):
         temperature: float = 1.0,
         top_k: int | None = None,
         use_cache: bool = True,
+        speculative_k: int = 0,
     ) -> torch.Tensor:
         # Clear HybridAttention state (RNN + local KV buffer) if requested
         if use_cache:
@@ -456,12 +523,83 @@ class ByteGPT(nn.Module):
             else:
                 idx_cond = idx[:, -self.config.block_size :]
                 logits, _ = self(idx_cond)
-            
-            logits = logits[:, -1, :] / max(temperature, 1e-5)
-            if top_k is not None:
-                values, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < values[:, [-1]]] = float("-inf")
-            probs = F.softmax(logits, dim=-1)
-            next_token = torch.multinomial(probs, num_samples=1)
-            idx = torch.cat((idx, next_token), dim=1)
+
+            # Speculative decoding: use MTP heads as draft models
+            if speculative_k > 0 and len(self.mtp_heads) >= speculative_k and hasattr(self, '_last_hidden'):
+                x_last = self._last_hidden[:, -1:]  # (B, 1, C) — last token hidden state
+
+                # 1. Draft speculative_k tokens with probabilities
+                draft_tokens = []
+                draft_probs = []
+                for head in self.mtp_heads[:speculative_k]:
+                    d_logits = head(x_last)[:, -1, :] / max(temperature, 1e-5)
+                    d_logits = d_logits.clamp(max=20)  # Prevent overflow in softmax
+                    if top_k is not None:
+                        vals, _ = torch.topk(d_logits, min(top_k, d_logits.size(-1)))
+                        # Create mask instead of setting to -inf
+                        mask = d_logits < vals[:, [-1]]
+                        d_logits = d_logits.masked_fill(mask, float('-inf'))
+                    d_probs = F.softmax(d_logits, dim=-1)
+                    # Ensure no NaN from softmax of all -inf
+                    d_probs = torch.where(d_probs.isnan(), torch.ones_like(d_probs) / d_logits.size(-1), d_probs)
+                    d_tok = torch.multinomial(d_probs, 1)
+                    draft_tokens.append(d_tok)
+                    draft_probs.append(d_probs.gather(1, d_tok).clamp(min=1e-10))
+
+                # 2. Main model: sample main token from current logits
+                main_logits = logits[:, -1, :] / max(temperature, 1e-5)
+                main_logits = main_logits.clamp(max=20)
+                if top_k is not None:
+                    vals, _ = torch.topk(main_logits, min(top_k, main_logits.size(-1)))
+                    mask = main_logits < vals[:, [-1]]
+                    main_logits = main_logits.masked_fill(mask, float('-inf'))
+                main_probs = F.softmax(main_logits, dim=-1)
+                main_probs = torch.where(main_probs.isnan(), torch.ones_like(main_probs) / main_logits.size(-1), main_probs)
+                main_tok = torch.multinomial(main_probs, 1)
+
+                # 3. Verify drafts: run one forward pass over main_tok + draft tokens
+                verify_input = torch.cat([idx[:, -1:], main_tok] + draft_tokens, dim=1)
+                verify_logits, _ = self(verify_input, use_cache=False)
+
+                # 4. Accept/reject drafts via speculative sampling
+                accepted = [main_tok]
+                self._last_n_accepted = 1
+                for j, (d_tok, d_prob) in enumerate(zip(draft_tokens, draft_probs)):
+                    v_logits = verify_logits[:, j + 1, :] / max(temperature, 1e-5)
+                    v_logits = v_logits.clamp(max=20)
+                    if top_k is not None:
+                        vals, _ = torch.topk(v_logits, min(top_k, v_logits.size(-1)))
+                        mask = v_logits < vals[:, [-1]]
+                        v_logits = v_logits.masked_fill(mask, float('-inf'))
+                    v_probs = F.softmax(v_logits, dim=-1)
+                    v_probs = torch.where(v_probs.isnan(), torch.ones_like(v_probs) / v_logits.size(-1), v_probs)
+                    v_prob_at_tok = v_probs.gather(1, d_tok).clamp(min=1e-10)
+                    acceptance = (v_prob_at_tok / d_prob).clamp(max=1.0)
+                    u = torch.rand_like(acceptance)
+                    if (u < acceptance).all():
+                        accepted.append(d_tok)
+                        self._last_n_accepted += 1
+                    else:
+                        # Reject: sample from adjusted distribution (verify - draft).clamp(0)
+                        adjusted = (v_probs - d_prob.expand_as(v_probs)).clamp(min=0)
+                        adj_sum = adjusted.sum(dim=-1, keepdim=True)
+                        # If adjusted distribution is all zeros, use uniform distribution
+                        adjusted = torch.where(
+                            adj_sum > 1e-10,
+                            adjusted / (adj_sum + 1e-10),
+                            torch.ones_like(adjusted) / adjusted.size(-1)
+                        )
+                        accepted.append(torch.multinomial(adjusted, 1))
+                        break  # Stop accepting after first rejection
+
+                idx = torch.cat([idx] + accepted, dim=1)
+            else:
+                # Standard autoregressive decoding
+                logits = logits[:, -1, :] / max(temperature, 1e-5)
+                if top_k is not None:
+                    values, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                    logits[logits < values[:, [-1]]] = float("-inf")
+                probs = F.softmax(logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+                idx = torch.cat((idx, next_token), dim=1)
         return idx

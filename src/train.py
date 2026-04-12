@@ -395,6 +395,8 @@ def estimate_loss(
         for step in range(eval_batches):
             if device == "cuda" and train_cfg is not None:
                 check_runtime_cuda_guardrails(train_cfg, f"evaluation/{split}")
+            # Always evaluate with NTP-only loss for clean perplexity metric
+            model._active_k = 0
             xb, yb = get_batch(data, batch_size, block_size, device)
             _, loss = model(xb, yb)
             split_losses[step] = loss.item()
@@ -443,6 +445,50 @@ def cosine_lr(step: int, max_steps: int, base_lr: float, warmup_steps: int) -> f
     return 0.1 * base_lr + 0.9 * base_lr * 0.5 * (1.0 + math.cos(math.pi * progress))
 
 
+class MTPCurriculumScheduler:
+    """Returns active_k and per-head loss weight for Multi-Token Prediction curriculum learning.
+
+    forward  curriculum: k ramps  1 → max_k  (preserves speculative decoding)
+    reverse  curriculum: k ramps max_k → 1
+    fixed    curriculum: k stays at max_k throughout
+    """
+
+    def __init__(
+        self,
+        max_k: int,
+        mode: str,  # "forward" | "reverse" | "fixed"
+        max_steps: int,
+        warmup_fraction: float,
+        head_loss_weight: float,
+    ) -> None:
+        self.max_k = max_k
+        self.mode = mode
+        self.warmup_steps = int(max_steps * warmup_fraction)
+        self.max_steps = max_steps
+        self.head_loss_weight = head_loss_weight
+
+    def get(self, step: int) -> tuple[int, float]:
+        """Return (active_k, head_loss_weight) for this step."""
+        if self.max_k == 0:
+            return 0, 0.0
+
+        if self.max_k == 1 or self.mode == "fixed":
+            return self.max_k, self.head_loss_weight
+
+        if step < self.warmup_steps:
+            return (self.max_k if self.mode == "reverse" else 1), self.head_loss_weight
+
+        post = (step - self.warmup_steps) / max(1, self.max_steps - self.warmup_steps)
+        slot = min(int(post * self.max_k), self.max_k - 1)
+
+        if self.mode == "forward":
+            active_k = slot + 1
+        else:  # "reverse"
+            active_k = self.max_k - slot
+
+        return active_k, self.head_loss_weight
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train Sisyphus from scratch")
     parser.add_argument("--config", default="config.yaml", help="Path to YAML config")
@@ -457,6 +503,8 @@ def main() -> None:
     data_cfg = config["data"]
     model_cfg = config["model"]
     train_cfg = config["training"]
+    mtp_cfg = config.get("mtp", {})
+    mtp_enabled = mtp_cfg.get("enabled", False)
     validate_guardrail_config(train_cfg, model_cfg)
 
     set_seed(train_cfg["seed"])
@@ -485,7 +533,12 @@ def main() -> None:
     if len(val_data) <= model_cfg["block_size"] + 1:
         raise ValueError("Validation split is too small; adjust train_split or corpus size")
 
-    gpt_config = GPTConfig(**model_cfg)
+    gpt_model_cfg = dict(model_cfg)
+    if mtp_enabled:
+        gpt_model_cfg["mtp_max_k"] = mtp_cfg.get("max_k", 0)
+        gpt_model_cfg["mtp_share_unembedding"] = mtp_cfg.get("share_unembedding", False)
+        gpt_model_cfg["mtp_label_smoothing"] = mtp_cfg.get("head_label_smoothing", 0.0)
+    gpt_config = GPTConfig(**gpt_model_cfg)
     model = ByteGPT(gpt_config).to(device)
 
     optimizer = torch.optim.AdamW(
@@ -494,6 +547,17 @@ def main() -> None:
         betas=tuple(train_cfg["betas"]),
         weight_decay=train_cfg["weight_decay"],
     )
+
+    # Initialize MTP curriculum scheduler if enabled
+    mtp_scheduler = None
+    if mtp_enabled:
+        mtp_scheduler = MTPCurriculumScheduler(
+            max_k=mtp_cfg.get("max_k", 0),
+            mode=mtp_cfg.get("curriculum", "forward"),
+            max_steps=train_cfg["max_steps"],
+            warmup_fraction=mtp_cfg.get("warmup_fraction", 0.1),
+            head_loss_weight=mtp_cfg.get("head_loss_weight", 0.3),
+        )
 
     checkpoint_path = (
         project_root / train_cfg["checkpoint_dir"] / train_cfg["checkpoint_name"]
@@ -546,6 +610,16 @@ def main() -> None:
     )
     enforce_memory_guardrails(train_cfg, estimated_memory, device)
 
+    # Initialize trunk freezing for MTP head calibration
+    trunk_freeze_steps = mtp_cfg.get("trunk_freeze_steps", 0) if mtp_enabled else 0
+    if trunk_freeze_steps > 0:
+        for name, p in model.named_parameters():
+            if not name.startswith("mtp_heads"):
+                p.requires_grad = False
+        logging.info(
+            f"Trunk frozen for first {trunk_freeze_steps} steps (MTP head calibration)"
+        )
+
     optimizer.zero_grad(set_to_none=True)
     for step in range(start_step, train_cfg["max_steps"]):
         lr = cosine_lr(
@@ -564,6 +638,18 @@ def main() -> None:
             device,
         )
         accum_steps = train_cfg.get("gradient_accumulation_steps", 1)
+
+        # Set MTP curriculum state for this step
+        if mtp_scheduler is not None:
+            active_k, hw = mtp_scheduler.get(step)
+            model._active_k = active_k
+            model._mtp_head_weight = hw
+
+        # Unfreeze trunk if freeze period is over
+        if trunk_freeze_steps > 0 and step == trunk_freeze_steps:
+            for p in model.parameters():
+                p.requires_grad = True
+            logging.info(f"Step {step}: trunk unfrozen — all parameters now training")
 
         try:
             if device == "cuda":
