@@ -507,7 +507,23 @@ fn is_raw_text_tag(tag_name: &str) -> bool {
 // Check if tag is self-closing (void) with no content
 fn is_void_tag(tag_name: &str) -> bool {
     // Match HTML void elements that have no closing tag
-    matches!(tag_name, "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "link" | "meta" | "param" | "source" | "track" | "wbr")
+    matches!(
+        tag_name,
+        "area"
+            | "base"
+            | "br"
+            | "col"
+            | "embed"
+            | "hr"
+            | "img"
+            | "input"
+            | "link"
+            | "meta"
+            | "param"
+            | "source"
+            | "track"
+            | "wbr"
+    )
 }
 
 // Find the position of '>' that closes a tag (respecting quotes)
@@ -728,10 +744,7 @@ mod tests {
         assert_eq!(
             document,
             Node::document(vec![
-                Node::element(
-                    "div",
-                    vec![Node::element("span", vec![Node::text("t")])],
-                ),
+                Node::element("div", vec![Node::element("span", vec![Node::text("t")])],),
                 Node::element("p", vec![Node::text("x")]),
             ])
         );
@@ -739,7 +752,8 @@ mod tests {
 
     #[test]
     fn treats_img_as_void_element() {
-        let mut parser = Parser::new("<div><img src=\"cat.txt\" alt=\"sleepy cat\"><p>caption</p></div>");
+        let mut parser =
+            Parser::new("<div><img src=\"cat.txt\" alt=\"sleepy cat\"><p>caption</p></div>");
         let document = parser.parse_document();
 
         // RUST FUNDAMENTAL: Test setup often constructs expected maps and structs explicitly so the assertion is precise.
@@ -796,8 +810,14 @@ mod tests {
         let document = parser.parse_document();
 
         let mut a_attributes = BTreeMap::new();
-        a_attributes.insert("href".to_string(), "http://example.com?foo=bar>baz".to_string());
-        a_attributes.insert("title".to_string(), "Text with 'quotes' > inside".to_string());
+        a_attributes.insert(
+            "href".to_string(),
+            "http://example.com?foo=bar>baz".to_string(),
+        );
+        a_attributes.insert(
+            "title".to_string(),
+            "Text with 'quotes' > inside".to_string(),
+        );
 
         assert_eq!(
             document,
@@ -811,13 +831,14 @@ mod tests {
 
     #[test]
     fn handles_json_in_data_attributes() {
-        let mut parser = Parser::new(
-            r#"<div data-config='{"key":"value","num":>0}'></div>"#,
-        );
+        let mut parser = Parser::new(r#"<div data-config='{"key":"value","num":>0}'></div>"#);
         let document = parser.parse_document();
 
         let mut div_attributes = BTreeMap::new();
-        div_attributes.insert("data-config".to_string(), "{\"key\":\"value\",\"num\":>0}".to_string());
+        div_attributes.insert(
+            "data-config".to_string(),
+            "{\"key\":\"value\",\"num\":>0}".to_string(),
+        );
 
         assert_eq!(
             document,

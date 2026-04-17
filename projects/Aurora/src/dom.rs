@@ -185,7 +185,12 @@ impl Node {
                 // Check if this element has matching ID attribute
                 // RUST FUNDAMENTAL: Chaining `get(...).map(...).unwrap_or(false)` is a compact way to say
                 // "compare the value if it exists, otherwise treat it as false".
-                if element.attributes.get("id").map(|v| v == id).unwrap_or(false) {
+                if element
+                    .attributes
+                    .get("id")
+                    .map(|v| v == id)
+                    .unwrap_or(false)
+                {
                     // Return true if ID matches
                     return true;
                 }

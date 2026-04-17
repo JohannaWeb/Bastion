@@ -1,11 +1,13 @@
 // Import layout box for rendering
 // RUST FUNDAMENTAL: This painter consumes already-computed layout data rather than parsing or styling directly.
 use crate::layout::LayoutBox;
+// Import image cache for decoded image data
+use crate::ImageCache;
 // Import Vello graphics primitives
 // RUST FUNDAMENTAL: `Rect as KRect` renames the imported type to avoid colliding with the project's own `Rect`.
-use vello::kurbo::{RoundedRect, Affine, Rect as KRect};
+use vello::kurbo::{Affine, Rect as KRect, RoundedRect};
 // Import color and fill types
-use peniko::{Color, Fill};
+use peniko::{Color, Fill, ImageBrush};
 // Import Vello scene for GPU rendering
 use vello::Scene;
 // Import OnceLock for lazy static initialization (thread-safe)
@@ -36,14 +38,19 @@ pub struct GpuPainter;
 // GpuPainter implementation
 impl GpuPainter {
     // Paint layout box with full opacity
-    pub fn paint(layout_box: &LayoutBox, scene: &mut Scene) {
+    pub fn paint(layout_box: &LayoutBox, scene: &mut Scene, images: &ImageCache) {
         // Delegate to opacity-aware version with 1.0 opacity
-        Self::paint_with_opacity(layout_box, scene, 1.0);
+        Self::paint_with_opacity(layout_box, scene, 1.0, images);
     }
 
     // Paint layout box with opacity blending through tree
     // RUST FUNDAMENTAL: parent_opacity f32 parameter shows how Rust passes primitives by value (Copy type)
-    fn paint_with_opacity(layout_box: &LayoutBox, scene: &mut Scene, parent_opacity: f32) {
+    fn paint_with_opacity(
+        layout_box: &LayoutBox,
+        scene: &mut Scene,
+        parent_opacity: f32,
+        images: &ImageCache,
+    ) {
         // Get styles from layout box
         // RUST FUNDAMENTAL: Borrowing the styles via `&StyleMap` avoids cloning per render step.
         let styles = layout_box.styles();
@@ -71,11 +78,16 @@ impl GpuPainter {
                 Affine::IDENTITY,
                 bg_color,
                 None,
-                &KRect::new(rect.x as f64, rect.y as f64, (rect.x + rect.width) as f64, (rect.y + rect.height) as f64),
+                &KRect::new(
+                    rect.x as f64,
+                    rect.y as f64,
+                    (rect.x + rect.width) as f64,
+                    (rect.y + rect.height) as f64,
+                ),
             );
         } else if layout_box.is_image() {
-            // Image: special rendering
-            paint_image(layout_box, scene);
+            // Image: render with decoded pixels when available, else gray placeholder
+            paint_image(layout_box, scene, images);
         } else if let Some(text) = layout_box.text() {
             // Text: render with opacity
             paint_text_with_opacity(layout_box, text, scene, effective_opacity);
@@ -87,7 +99,7 @@ impl GpuPainter {
         // Recursively paint children with inherited opacity
         // RUST FUNDAMENTAL: for loop borrows children iterator
         for child in layout_box.children() {
-            Self::paint_with_opacity(child, scene, effective_opacity);
+            Self::paint_with_opacity(child, scene, effective_opacity, images);
         }
     }
 }
@@ -101,7 +113,10 @@ fn paint_element_with_opacity(layout_box: &LayoutBox, scene: &mut Scene, opacity
 
     // Get background color, trying multiple property names
     // RUST FUNDAMENTAL: .or_else() chains Option<T> handling; unwrap_or() provides default
-    let bg_color_name = styles.get("background-color").or_else(|| styles.get("background")).unwrap_or("transparent");
+    let bg_color_name = styles
+        .get("background-color")
+        .or_else(|| styles.get("background"))
+        .unwrap_or("transparent");
     // Parse color string into Color object
     let mut bg_color = parse_color(bg_color_name);
 
@@ -121,13 +136,21 @@ fn paint_element_with_opacity(layout_box: &LayoutBox, scene: &mut Scene, opacity
     let radius = if let Some(radius_str) = styles.get("border-radius") {
         // RUST FUNDAMENTAL: if let Some(x) = option unwraps Some variant
         // trim_end_matches() removes "px" suffix, parse() converts string to f32
-        radius_str.trim_end_matches("px").parse::<f32>().unwrap_or(0.0) as f64
+        radius_str
+            .trim_end_matches("px")
+            .parse::<f32>()
+            .unwrap_or(0.0) as f64
     } else {
         0.0
     };
 
     // Create rectangle in Vello's coordinate system
-    let k_rect = KRect::new(r.x as f64, r.y as f64, (r.x + r.width) as f64, (r.y + r.height) as f64);
+    let k_rect = KRect::new(
+        r.x as f64,
+        r.y as f64,
+        (r.x + r.width) as f64,
+        (r.y + r.height) as f64,
+    );
     // Create rounded rectangle with border radius
     // RUST FUNDAMENTAL: Adapters like `KRect` and `RoundedRect` bridge your own data structures to library-specific geometry types.
     let rounded_rect = RoundedRect::from_rect(k_rect, radius);
@@ -158,13 +181,25 @@ fn paint_element_with_opacity(layout_box: &LayoutBox, scene: &mut Scene, opacity
 
     // Paint background if not fully transparent
     if bg_color.components[3] > 0.0 {
-        scene.fill(Fill::NonZero, Affine::IDENTITY, bg_color, None, &rounded_rect);
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            bg_color,
+            None,
+            &rounded_rect,
+        );
     }
 
     if border.top > 0.0 {
         let stroke_width = border.top as f64;
         // RUST FUNDAMENTAL: The cast to `f64` matches the geometry library's coordinate type.
-        scene.stroke(&vello::kurbo::Stroke::new(stroke_width), Affine::IDENTITY, border_color, None, &rounded_rect);
+        scene.stroke(
+            &vello::kurbo::Stroke::new(stroke_width),
+            Affine::IDENTITY,
+            border_color,
+            None,
+            &rounded_rect,
+        );
     }
 }
 
@@ -228,7 +263,13 @@ fn paint_text_with_opacity(layout_box: &LayoutBox, text: &str, scene: &mut Scene
                         gx + col as f64 + 1.0,
                         gy + row as f64 + 1.0,
                     );
-                    scene.fill(Fill::NonZero, Affine::IDENTITY, glyph_color, None, &pixel_rect);
+                    scene.fill(
+                        Fill::NonZero,
+                        Affine::IDENTITY,
+                        glyph_color,
+                        None,
+                        &pixel_rect,
+                    );
                 }
             }
         }
@@ -240,7 +281,13 @@ fn paint_text_with_opacity(layout_box: &LayoutBox, text: &str, scene: &mut Scene
         let stroke_width_deco = (font_size * 0.1).max(1.0) as f64;
         if text_decoration.contains("underline") {
             let line_y = baseline_y + font_size as f64 * 0.1;
-            scene.stroke(&vello::kurbo::Stroke::new(stroke_width_deco), Affine::IDENTITY, text_color, None, &vello::kurbo::Line::new((r.x as f64 + offset_x, line_y), (text_end_x, line_y)));
+            scene.stroke(
+                &vello::kurbo::Stroke::new(stroke_width_deco),
+                Affine::IDENTITY,
+                text_color,
+                None,
+                &vello::kurbo::Line::new((r.x as f64 + offset_x, line_y), (text_end_x, line_y)),
+            );
         }
     }
 }
@@ -252,7 +299,11 @@ fn parse_color(name: &str) -> Color {
         let hex = &name[1..];
         if hex.len() == 6 {
             if let Ok(c) = u32::from_str_radix(hex, 16) {
-                return Color::from_rgb8(((c >> 16) & 0xFF) as u8, ((c >> 8) & 0xFF) as u8, (c & 0xFF) as u8);
+                return Color::from_rgb8(
+                    ((c >> 16) & 0xFF) as u8,
+                    ((c >> 8) & 0xFF) as u8,
+                    (c & 0xFF) as u8,
+                );
             }
         }
     }
@@ -271,9 +322,36 @@ fn parse_color(name: &str) -> Color {
     }
 }
 
-fn paint_image(layout_box: &LayoutBox, scene: &mut Scene) {
+fn paint_image(layout_box: &LayoutBox, scene: &mut Scene, images: &ImageCache) {
     let r = layout_box.rect();
-    let k_rect = KRect::new(r.x as f64, r.y as f64, (r.x + r.width) as f64, (r.y + r.height) as f64);
-    // RUST FUNDAMENTAL: This placeholder keeps the image pipeline simple for now by drawing a solid rectangle instead of sampling a texture.
-    scene.fill(Fill::NonZero, Affine::IDENTITY, Color::from_rgb8(200, 200, 200), None, &k_rect);
+    let k_rect = KRect::new(
+        r.x as f64,
+        r.y as f64,
+        (r.x + r.width) as f64,
+        (r.y + r.height) as f64,
+    );
+
+    // If the image was fetched and decoded, render it; otherwise fall back to a gray placeholder.
+    if let Some(src) = layout_box.image_src() {
+        if let Some(img_data) = images.get(src) {
+            if img_data.width > 0 && img_data.height > 0 && r.width > 0.0 && r.height > 0.0 {
+                let scale_x = r.width as f64 / img_data.width as f64;
+                let scale_y = r.height as f64 / img_data.height as f64;
+                let affine = Affine::translate((r.x as f64, r.y as f64))
+                    * Affine::scale_non_uniform(scale_x, scale_y);
+                let brush = ImageBrush::new(img_data.clone());
+                scene.draw_image(brush.as_ref(), affine);
+                return;
+            }
+        }
+    }
+
+    // Fallback: gray placeholder rectangle
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        Color::from_rgb8(200, 200, 200),
+        None,
+        &k_rect,
+    );
 }

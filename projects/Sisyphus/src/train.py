@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 import os
 import random
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,10 @@ import yaml
 from torch.amp import autocast
 
 from model import ByteGPT, GPTConfig
+
+# Enable TF32 for faster matrix operations on Ada/Ampere GPUs
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
 
 # === Monarch-inspired optimizations ===
@@ -55,66 +61,15 @@ class GradientQuantizer:
         """Restore original gradients after optimizer step."""
         if not self.enabled:
             return
-        for name, (orig_grad, scale, zero_point) in self.original_grads.items():
-            for param in model.parameters():
-                if param.grad is not None:
-                    param.grad = orig_grad
+        param_map = {name: param for name, param in model.named_parameters()}
+        for name, (orig_grad, _, _) in self.original_grads.items():
+            if name in param_map:
+                param_map[name].grad = orig_grad
         self.original_grads.clear()
 
 
-class ActivationCompressor:
-    """Compress activations using polar compression for memory savings."""
-    def __init__(self, enabled: bool = False):
-        self.enabled = enabled
-        self.compressed_activations = {}
-        self.centroids = {}
-
-    def compress(self, tensor: torch.Tensor, layer_id: int) -> torch.Tensor:
-        """Polar compress activation tensor."""
-        if not self.enabled:
-            return tensor
-        flat = tensor.flatten(2)
-        if layer_id not in self.centroids:
-            self.centroids[layer_id] = flat.mean(dim=-1, keepdim=True)
-        centroid = self.centroids[layer_id]
-        diff = flat - centroid
-        magnitude = diff.norm(dim=1, keepdim=True)
-        angle = diff / (magnitude + 1e-8)
-        compressed = torch.cat([magnitude, angle], dim=1)
-        return compressed
-
-    def decompress(self, compressed: torch.Tensor, layer_id: int, target_shape: torch.Size) -> torch.Tensor:
-        """Decompress polar representation back to original shape."""
-        if not self.enabled:
-            return compressed
-        magnitude = compressed[:, :compressed.shape[1]//2, :]
-        angle = compressed[:, compressed.shape[1]//2:, :]
-        centroid = self.centroids.get(layer_id, torch.zeros_like(magnitude))
-        return (angle * magnitude + centroid).view(target_shape)
-
-
-class SelectiveBackprop:
-    """Selectively compute gradients for high-importance layers/tokens."""
-    def __init__(self, enabled: bool = False, importance_threshold: float = 0.5):
-        self.enabled = enabled
-        self.importance_threshold = importance_threshold
-        self.layer_importance = {}
-        self.hook_handles = []
-
-    def compute_layer_importance(self, model: torch.nn.Module) -> dict[str, float]:
-        """Compute importance scores based on gradient magnitudes."""
-        importance = {}
-        for name, param in model.named_parameters():
-            if param.grad is not None:
-                importance[name] = param.grad.abs().mean().item()
-        return importance
-
-    def should_compute_grad(self, param_name: str) -> bool:
-        """Check if gradient should be computed for this parameter."""
-        if not self.enabled:
-            return True
-        score = self.layer_importance.get(param_name, 1.0)
-        return score > self.importance_threshold
+# Removed: ActivationCompressor (never called in forward pass, broken logic)
+# Removed: SelectiveBackprop (computed but never used)
 
 
 class StickyParameters:
@@ -167,11 +122,10 @@ class GradientPager:
         """Page gradients back from CPU for optimizer step."""
         if not self.enabled:
             return
+        param_map = {name: param for name, param in model.named_parameters()}
         for name, cached_grad in self.gradients_cpu.items():
-            for param in model.parameters():
-                if param.grad is None:
-                    param.grad = cached_grad.to(param.device)
-                    break
+            if name in param_map:
+                param_map[name].grad = cached_grad.to(param_map[name].device)
         self.gradients_cpu.clear()
 
 
@@ -201,13 +155,17 @@ def set_seed(seed: int) -> None:
 def get_batch(
     data: torch.Tensor, batch_size: int, block_size: int, device: str
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    """Efficiently sample batch using vectorized indexing."""
+    # Vectorized batch generation (much faster than list comprehension)
+    # Keep indices on CPU since numpy memmap is CPU-based
     starts = torch.randint(len(data) - block_size - 1, (batch_size,))
-    x = torch.stack([data[i : i + block_size] for i in starts])
-    y = torch.stack([data[i + 1 : i + block_size + 1] for i in starts])
-    return (
-        x.to(device=device, dtype=torch.long),
-        y.to(device=device, dtype=torch.long),
-    )
+    # Create index array for all positions: (batch_size, block_size + 1)
+    indices = starts.unsqueeze(1) + torch.arange(block_size + 1)
+    batch = data[indices]  # Index into memmap (CPU)
+    # Convert to target device
+    xb = batch[:, :-1].long().to(device=device)
+    yb = batch[:, 1:].long().to(device=device)
+    return xb, yb
 
 
 def load_corpus(corpus_path: Path) -> tuple[torch.Tensor, int]:
@@ -374,11 +332,11 @@ def print_training_preflight(
     block_size: int,
 ) -> dict[str, int]:
     memory = estimate_training_memory(model, batch_size, block_size, use_amp)
-    print(f"Corpus bytes: {corpus_size}")
-    print(f"Corpus storage: memmap uint8 ({format_bytes(corpus_size)})")
-    print(f"Train bytes: {len(train_data):,} | val bytes: {len(val_data):,}")
-    print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
-    print(
+    logging.info(f"Corpus bytes: {corpus_size}")
+    logging.info(f"Corpus storage: memmap uint8 ({format_bytes(corpus_size)})")
+    logging.info(f"Train bytes: {len(train_data):,} | val bytes: {len(val_data):,}")
+    logging.info(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    logging.info(
         "Estimated training memory: "
         f"params {format_bytes(memory['params'])}, "
         f"grads {format_bytes(memory['grads'])}, "
@@ -388,26 +346,26 @@ def print_training_preflight(
     )
     total_system_memory = get_total_system_memory()
     if total_system_memory is not None:
-        print(f"System RAM: {format_bytes(total_system_memory)}")
+        logging.info(f"System RAM: {format_bytes(total_system_memory)}")
         if memory["total"] > total_system_memory * 0.7:
-            print(
+            logging.warning(
                 "Warning: estimated training memory exceeds 70% of system RAM. "
                 "Reduce batch_size, block_size, or model size before a long run."
             )
     if device == "cuda" and torch.cuda.is_available():
         snapshot = get_cuda_memory_snapshot()
         assert snapshot is not None
-        print(
+        logging.info(
             "CUDA VRAM: "
             f"{format_bytes(snapshot['free'])} free / {format_bytes(snapshot['total'])} total"
         )
-        print(
+        logging.info(
             "CUDA allocator: "
             f"{format_bytes(snapshot['allocated'])} allocated / "
             f"{format_bytes(snapshot['reserved'])} reserved"
         )
         if memory["total"] > snapshot["free"]:
-            print(
+            logging.warning(
                 "Warning: estimated training memory exceeds currently free VRAM. "
                 "Reduce batch_size, block_size, or close other GPU workloads."
             )
@@ -437,6 +395,8 @@ def estimate_loss(
         for step in range(eval_batches):
             if device == "cuda" and train_cfg is not None:
                 check_runtime_cuda_guardrails(train_cfg, f"evaluation/{split}")
+            # Always evaluate with NTP-only loss for clean perplexity metric
+            model._active_k = 0
             xb, yb = get_batch(data, batch_size, block_size, device)
             _, loss = model(xb, yb)
             split_losses[step] = loss.item()
@@ -452,18 +412,26 @@ def save_checkpoint(
     step: int,
     config: dict[str, Any],
     metrics: dict[str, float],
+    async_save: bool = True,
 ) -> None:
+    """Save checkpoint, optionally asynchronously to avoid blocking training."""
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "step": step,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "config": config,
-            "metrics": metrics,
-        },
-        checkpoint_path,
-    )
+    checkpoint_data = {
+        "step": step,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "config": config,
+        "metrics": metrics,
+    }
+
+    if async_save:
+        # Save in background thread to avoid blocking training
+        def _save():
+            torch.save(checkpoint_data, checkpoint_path)
+        thread = threading.Thread(target=_save, daemon=True)
+        thread.start()
+    else:
+        torch.save(checkpoint_data, checkpoint_path)
 
 
 def derive_snapshot_path(checkpoint_path: Path, suffix: str) -> Path:
@@ -477,10 +445,57 @@ def cosine_lr(step: int, max_steps: int, base_lr: float, warmup_steps: int) -> f
     return 0.1 * base_lr + 0.9 * base_lr * 0.5 * (1.0 + math.cos(math.pi * progress))
 
 
+class MTPCurriculumScheduler:
+    """Returns active_k and per-head loss weight for Multi-Token Prediction curriculum learning.
+
+    forward  curriculum: k ramps  1 → max_k  (preserves speculative decoding)
+    reverse  curriculum: k ramps max_k → 1
+    fixed    curriculum: k stays at max_k throughout
+    """
+
+    def __init__(
+        self,
+        max_k: int,
+        mode: str,  # "forward" | "reverse" | "fixed"
+        max_steps: int,
+        warmup_fraction: float,
+        head_loss_weight: float,
+    ) -> None:
+        self.max_k = max_k
+        self.mode = mode
+        self.warmup_steps = int(max_steps * warmup_fraction)
+        self.max_steps = max_steps
+        self.head_loss_weight = head_loss_weight
+
+    def get(self, step: int) -> tuple[int, float]:
+        """Return (active_k, head_loss_weight) for this step."""
+        if self.max_k == 0:
+            return 0, 0.0
+
+        if self.max_k == 1 or self.mode == "fixed":
+            return self.max_k, self.head_loss_weight
+
+        if step < self.warmup_steps:
+            return (self.max_k if self.mode == "reverse" else 1), self.head_loss_weight
+
+        post = (step - self.warmup_steps) / max(1, self.max_steps - self.warmup_steps)
+        slot = min(int(post * self.max_k), self.max_k - 1)
+
+        if self.mode == "forward":
+            active_k = slot + 1
+        else:  # "reverse"
+            active_k = self.max_k - slot
+
+        return active_k, self.head_loss_weight
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train Sisyphus from scratch")
     parser.add_argument("--config", default="config.yaml", help="Path to YAML config")
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
     args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
     config_path = Path(args.config).resolve()
     project_root = Path(__file__).resolve().parents[1]
@@ -488,6 +503,8 @@ def main() -> None:
     data_cfg = config["data"]
     model_cfg = config["model"]
     train_cfg = config["training"]
+    mtp_cfg = config.get("mtp", {})
+    mtp_enabled = mtp_cfg.get("enabled", False)
     validate_guardrail_config(train_cfg, model_cfg)
 
     set_seed(train_cfg["seed"])
@@ -516,7 +533,12 @@ def main() -> None:
     if len(val_data) <= model_cfg["block_size"] + 1:
         raise ValueError("Validation split is too small; adjust train_split or corpus size")
 
-    gpt_config = GPTConfig(**model_cfg)
+    gpt_model_cfg = dict(model_cfg)
+    if mtp_enabled:
+        gpt_model_cfg["mtp_max_k"] = mtp_cfg.get("max_k", 0)
+        gpt_model_cfg["mtp_share_unembedding"] = mtp_cfg.get("share_unembedding", False)
+        gpt_model_cfg["mtp_label_smoothing"] = mtp_cfg.get("head_label_smoothing", 0.0)
+    gpt_config = GPTConfig(**gpt_model_cfg)
     model = ByteGPT(gpt_config).to(device)
 
     optimizer = torch.optim.AdamW(
@@ -526,6 +548,17 @@ def main() -> None:
         weight_decay=train_cfg["weight_decay"],
     )
 
+    # Initialize MTP curriculum scheduler if enabled
+    mtp_scheduler = None
+    if mtp_enabled:
+        mtp_scheduler = MTPCurriculumScheduler(
+            max_k=mtp_cfg.get("max_k", 0),
+            mode=mtp_cfg.get("curriculum", "forward"),
+            max_steps=train_cfg["max_steps"],
+            warmup_fraction=mtp_cfg.get("warmup_fraction", 0.1),
+            head_loss_weight=mtp_cfg.get("head_loss_weight", 0.3),
+        )
+
     checkpoint_path = (
         project_root / train_cfg["checkpoint_dir"] / train_cfg["checkpoint_name"]
     )
@@ -533,23 +566,38 @@ def main() -> None:
 
     best_val = float("inf")
     best_step = -1
+    start_step = 0
+
+    # Resume from checkpoint if provided
+    if args.resume:
+        resume_path = Path(args.resume)
+        if not resume_path.exists():
+            raise FileNotFoundError(f"Resume checkpoint not found at {resume_path}")
+        logging.info(f"Resuming from checkpoint: {resume_path}")
+        checkpoint = torch.load(resume_path, map_location=device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        start_step = checkpoint["step"] + 1
+        if "metrics" in checkpoint:
+            metrics = checkpoint["metrics"]
+            if "val" in metrics:
+                best_val = metrics["val"]
+            if "best_step" in metrics:
+                best_step = metrics["best_step"]
+        logging.info(f"Resumed from step {checkpoint['step']}, best_val={best_val:.4f}")
     use_amp = device in ("cuda", "mps")
-    scaler = torch.cuda.amp.GradScaler() if use_amp else None
+    scaler = torch.cuda.amp.GradScaler() if device == "cuda" else None
 
     # Initialize Monarch optimizations
     gradient_quantizer = GradientQuantizer(enabled=train_cfg.get("gradient_quantization", False))
-    activation_compressor = ActivationCompressor(enabled=train_cfg.get("activation_compression", False))
-    selective_backprop = SelectiveBackprop(enabled=train_cfg.get("selective_backprop", False))
     sticky_params = StickyParameters(enabled=train_cfg.get("sticky_params", False))
     gradient_pager = GradientPager(enabled=train_cfg.get("gradient_paging", False))
 
-    print(f"Training on {device}")
-    print(f"Mixed precision: {use_amp}")
-    print(f"Gradient quantization: {gradient_quantizer.enabled}")
-    print(f"Activation compression: {activation_compressor.enabled}")
-    print(f"Selective backprop: {selective_backprop.enabled}")
-    print(f"Sticky parameters: {sticky_params.enabled}")
-    print(f"Gradient paging: {gradient_pager.enabled}")
+    logging.info(f"Training on {device}")
+    logging.info(f"Mixed precision: {use_amp}")
+    logging.info(f"Gradient quantization: {gradient_quantizer.enabled}")
+    logging.info(f"Sticky parameters: {sticky_params.enabled}")
+    logging.info(f"Gradient paging: {gradient_pager.enabled}")
     estimated_memory = print_training_preflight(
         corpus_size=corpus_size,
         train_data=train_data,
@@ -562,8 +610,18 @@ def main() -> None:
     )
     enforce_memory_guardrails(train_cfg, estimated_memory, device)
 
+    # Initialize trunk freezing for MTP head calibration
+    trunk_freeze_steps = mtp_cfg.get("trunk_freeze_steps", 0) if mtp_enabled else 0
+    if trunk_freeze_steps > 0:
+        for name, p in model.named_parameters():
+            if not name.startswith("mtp_heads"):
+                p.requires_grad = False
+        logging.info(
+            f"Trunk frozen for first {trunk_freeze_steps} steps (MTP head calibration)"
+        )
+
     optimizer.zero_grad(set_to_none=True)
-    for step in range(train_cfg["max_steps"]):
+    for step in range(start_step, train_cfg["max_steps"]):
         lr = cosine_lr(
             step=step,
             max_steps=train_cfg["max_steps"],
@@ -581,6 +639,18 @@ def main() -> None:
         )
         accum_steps = train_cfg.get("gradient_accumulation_steps", 1)
 
+        # Set MTP curriculum state for this step
+        if mtp_scheduler is not None:
+            active_k, hw = mtp_scheduler.get(step)
+            model._active_k = active_k
+            model._mtp_head_weight = hw
+
+        # Unfreeze trunk if freeze period is over
+        if trunk_freeze_steps > 0 and step == trunk_freeze_steps:
+            for p in model.parameters():
+                p.requires_grad = True
+            logging.info(f"Step {step}: trunk unfrozen — all parameters now training")
+
         try:
             if device == "cuda":
                 check_runtime_cuda_guardrails(train_cfg, "training/forward")
@@ -588,7 +658,10 @@ def main() -> None:
                 with autocast(device_type="cuda" if device == "cuda" else "mps"):
                     _, loss = model(xb, yb)
                 loss = loss / accum_steps
-                scaler.scale(loss).backward()
+                if scaler is not None:
+                    scaler.scale(loss).backward()
+                else:
+                    loss.backward()
             else:
                 _, loss = model(xb, yb)
                 loss = loss / accum_steps
@@ -605,17 +678,13 @@ def main() -> None:
 
         # Apply Monarch optimizations before optimizer step
         if (step + 1) % accum_steps == 0 or step == train_cfg["max_steps"] - 1:
-            # Selective backprop: compute layer importance
-            if selective_backprop.enabled:
-                selective_backprop.layer_importance = selective_backprop.compute_layer_importance(model)
-
             # Gradient quantization (compress before clip)
             gradient_quantizer.quantize_gradients(model)
 
             # Gradient paging (offload low-magnitude grads)
             gradient_pager.page_out(model)
 
-            if use_amp:
+            if scaler is not None:
                 scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg["grad_clip"])
 
@@ -628,7 +697,7 @@ def main() -> None:
             # Update sticky params tracking
             sticky_params.update(model)
 
-            if use_amp:
+            if scaler is not None:
                 scaler.step(optimizer)
                 scaler.update()
             else:
@@ -646,7 +715,7 @@ def main() -> None:
                 device,
                 train_cfg=train_cfg,
             )
-            print(
+            logging.info(
                 f"step {step:5d} | train {losses['train']:.4f} | val {losses['val']:.4f} | lr {lr:.6f}"
             )
             if losses["val"] < best_val:
@@ -669,7 +738,7 @@ def main() -> None:
         last_checkpoint_path,
         model,
         optimizer,
-        train_cfg["max_steps"],
+        train_cfg["max_steps"] - 1,
         config,
         final_metrics,
     )
@@ -677,8 +746,8 @@ def main() -> None:
     with metrics_path.open("w", encoding="utf-8") as handle:
         json.dump(final_metrics, handle, indent=2)
 
-    print(f"Best checkpoint written to {checkpoint_path}")
-    print(f"Last checkpoint written to {last_checkpoint_path}")
+    logging.info(f"Best checkpoint written to {checkpoint_path}")
+    logging.info(f"Last checkpoint written to {last_checkpoint_path}")
 
 
 if __name__ == "__main__":

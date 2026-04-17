@@ -82,7 +82,7 @@ use crate::html::Parser;
 // Import layout tree for spatial box calculations
 // RUST FUNDAMENTAL: Rust resolves names through module paths, and only public items can be reached from outside their module.
 // `use` does not copy anything; it only gives the current scope a convenient binding to that path.
-use crate::layout::LayoutTree;
+use crate::layout::{LayoutBox, LayoutTree};
 
 // Import style tree for DOM nodes with applied styles
 // RUST FUNDAMENTAL: When two types live in different modules, `use` keeps the local code from turning into long path soup.
@@ -108,6 +108,13 @@ use opus::domain::{Capability, Identity};
 // RUST FUNDAMENTAL: `std::env` is the standard-library module for interacting with process environment data.
 // Two common entry points are command-line arguments and environment variables.
 use std::env;
+
+// Import HashMap for the image cache
+use std::collections::HashMap;
+
+// Map from resolved image URL to decoded peniko ImageData (RGBA8 pixels).
+// Shared between the layout pipeline and the GPU renderer.
+pub type ImageCache = HashMap<String, peniko::ImageData>;
 
 // Entry point function for Aurora browser
 // RUST FUNDAMENTAL: `main` is the executable entry point for a Rust binary crate.
@@ -197,107 +204,63 @@ fn main() {
     // RUST FUNDAMENTAL: Borrowing with `&html` lets the parser read the string without taking ownership of it.
     // That means `html` can still be used later in this scope if needed.
     let dom = Parser::new(&html).parse_document();
-    // Extract stylesheets from DOM (style tags) and create stylesheet object
-    // RUST FUNDAMENTAL: `let mut` means the binding itself may be reassigned or mutated through methods requiring `&mut self`.
-    // Here we need mutability because we merge additional rules into the stylesheet after construction.
-    let mut stylesheet = Stylesheet::from_dom(&dom, url_arg.as_deref(), &identity);
-    // Merge user agent default styles (browser built-in styles)
-    // RUST FUNDAMENTAL: A mutating method like `.merge(...)` usually takes `&mut self`.
-    // The caller keeps ownership of the same value while allowing the method to change its internal state.
-    stylesheet.merge(Stylesheet::user_agent_stylesheet());
-    // Apply stylesheet rules to DOM tree, creating styled nodes
-    // RUST FUNDAMENTAL: Passing shared references like `&dom` and `&stylesheet` is cheap because only the pointer-sized borrow is copied.
-    // Rust prefers borrowing over cloning whenever ownership transfer is unnecessary.
-    let style_tree = StyleTree::from_dom(&dom, &stylesheet);
-    // Generate layout boxes from styled tree with calculated positions and sizes
-    // RUST FUNDAMENTAL: This is a classic pipeline step: parse -> style -> layout.
-    // Rust code often models staged transforms by constructing a new owned value from the previous stage.
-    let layout = LayoutTree::from_style_tree_with_viewport_width(&style_tree, viewport_width);
 
-    // If DOM debug flag set, print the parsed DOM tree structure
-    // RUST FUNDAMENTAL: An `if` condition must evaluate to `bool`; Rust does not implicitly treat other values as truthy or falsy.
-    if cli.debug_dom {
-        // RUST FUNDAMENTAL: `dom.borrow()` returns a temporary shared borrow guard from `RefCell`.
-        // Formatting uses that borrowed view and then the guard is dropped at the end of the statement.
-        println!("{}", dom.borrow());
-    }
-    // If style debug flag set, print the styled tree with applied CSS
-    if cli.debug_style {
-        // RUST FUNDAMENTAL: Format strings can reference variables directly inside `{...}` when the type implements the needed formatting trait.
-        println!("{style_tree}");
-    }
-    // If layout debug flag set, print the layout tree with positions
-    if cli.debug_layout {
-        println!("{layout}");
-    }
-
-    // Extract all script elements (inline and external) from the DOM
-    // RUST FUNDAMENTAL: The function returns an owned `Vec`, so `scripts` now owns the list of discovered script descriptors.
+    // Run JavaScript BEFORE layout so DOM mutations are visible to the layout pass.
+    // Google and most modern pages inject their content via JS; running scripts first
+    // means appendChild/setAttribute calls land in the shared Rc<RefCell<Node>> tree
+    // before we freeze it into a LayoutTree.
     let scripts = extract_scripts(&dom);
-    // Only process scripts if any were found
-    // RUST FUNDAMENTAL: `is_empty()` is often clearer than comparing `len()` to zero because it states the intent directly.
     if !scripts.is_empty() {
-        // Print number of scripts being processed
         println!("Boa: Processing {} scripts...", scripts.len());
-        // Create new Boa JavaScript runtime, sharing reference to DOM
-        // RUST FUNDAMENTAL: `Rc::clone(&dom)` clones the reference-counted pointer, not the whole DOM tree.
-        // Both `dom` and `runtime` now share ownership of the same underlying node graph.
         let mut runtime = js_boa::BoaRuntime::new(Rc::clone(&dom));
-        // Iterate over each script tuple (content/URL, is_external_flag)
-        // RUST FUNDAMENTAL: A `for` loop consumes the vector here because we iterate by value, not by reference.
-        // Each loop iteration takes ownership of one `(String, bool)` tuple from `scripts`.
         for (source, is_url) in scripts {
-            // Determine script content by loading from URL or using inline
-            // RUST FUNDAMENTAL: `if` is also an expression in Rust, so this whole block produces the `String` assigned to `script_content`.
             let script_content = if is_url {
-                // If script has a src attribute, treat as external URL
-                // RUST FUNDAMENTAL: `if let Some(base) = ...` is a concise way to continue only when an optional value exists.
                 if let Some(base) = url_arg.as_deref() {
-                    // Resolve relative URLs against document base URL
                     match crate::fetch::resolve_relative_url(base, &source) {
-                        // If resolution succeeds, fetch the script content
                         Ok(full_url) => {
-                            // Print the URL being fetched
                             println!("Boa: Fetching external script: {}", full_url);
-                            // Fetch the script file over network
                             match crate::fetch::fetch_string(&full_url, &identity) {
-                                // Use fetched content if successful
                                 Ok(content) => content,
-                                // Skip script if fetch fails
                                 Err(e) => {
-                                    // RUST FUNDAMENTAL: `continue` skips the rest of the current loop iteration and jumps to the next item.
-                                    // It is useful for recoverable per-item failures inside batch processing loops.
                                     eprintln!("Failed to fetch script {}: {}", full_url, e);
                                     continue;
                                 }
                             }
                         }
-                        // Skip script if URL resolution fails
                         Err(e) => {
                             eprintln!("Failed to resolve script URL {}: {}", source, e);
                             continue;
                         }
                     }
                 } else {
-                    // Skip external script if no base URL available
-                    // RUST FUNDAMENTAL: This branch still type-checks because `continue` never produces a normal value.
-                    // In Rust, control-flow expressions like `continue`, `break`, and `return` have the special `!` never type.
                     continue;
                 }
             } else {
-                // Use inline script content directly
-                // RUST FUNDAMENTAL: Because `source` is owned in this loop, returning it here moves the `String` into `script_content`.
                 source
             };
-
-            // Execute script in Boa runtime with error handling
-            // RUST FUNDAMENTAL: `if let Err(e) = ...` is the mirror image of matching a success case.
-            // It keeps the happy path visually compact while still handling failures explicitly.
             if let Err(e) = runtime.execute(&script_content) {
-                // Print JavaScript execution errors to stderr
                 eprintln!("JS Error: {}", e);
             }
         }
+    }
+
+    // Build stylesheet, style tree, and layout from the post-JS DOM.
+    let mut stylesheet = Stylesheet::from_dom(&dom, url_arg.as_deref(), &identity);
+    stylesheet.merge(Stylesheet::user_agent_stylesheet());
+    let style_tree = StyleTree::from_dom(&dom, &stylesheet);
+    let layout = LayoutTree::from_style_tree_with_viewport_width(&style_tree, viewport_width);
+
+    // Pre-fetch and decode all images referenced in the layout tree.
+    let image_cache = load_images(layout.root(), url_arg.as_deref(), &identity);
+
+    if cli.debug_dom {
+        println!("{}", dom.borrow());
+    }
+    if cli.debug_style {
+        println!("{style_tree}");
+    }
+    if cli.debug_layout {
+        println!("{layout}");
     }
 
     // Initialize font atlas before rendering (forces glyph load)
@@ -322,7 +285,7 @@ fn main() {
     if has_screenshot || (!is_headless && has_display) {
         // Attempt to open interactive GPU window for rendering
         // RUST FUNDAMENTAL: `if let Err(error) = ...` both checks for failure and binds the error value in one step.
-        if let Err(error) = window::open(&layout) {
+        if let Err(error) = window::open(&layout, &image_cache) {
             // Print error if window creation fails
             eprintln!("Window disabled: {error}");
             // Suggest alternative output methods to user
@@ -470,7 +433,6 @@ fn env_flag(name: &str) -> bool {
         // RUST FUNDAMENTAL: `env::var()` returns a `Result` because environment lookup can fail.
         // `.as_deref()` then converts the successful `String` into `&str` by borrowing it, which makes the later string-pattern match cheaper.
         env::var(name).as_deref(),
-
         // Match "1", "true" (any case), or "yes" (any case)
         // RUST FUNDAMENTAL: `|` combines patterns with logical OR semantics inside pattern matching.
         // Any one of these successful `Ok("...")` forms will satisfy the macro.
@@ -649,4 +611,54 @@ fn extract_scripts(node: &crate::dom::NodePtr) -> Vec<(String, bool)> {
     // RUST FUNDAMENTAL: Returning `scripts` moves ownership of the finished vector to the caller.
     // Because Rust uses move semantics by default, no extra copy of the vector contents is made here.
     scripts
+}
+
+// Walk the layout tree and collect the resolved URL for every image node.
+fn collect_image_srcs(node: &LayoutBox, base_url: Option<&str>, out: &mut Vec<String>) {
+    if let Some(src) = node.image_src() {
+        let resolved = if let Some(base) = base_url {
+            crate::fetch::resolve_relative_url(base, src).unwrap_or_else(|_| src.to_string())
+        } else {
+            src.to_string()
+        };
+        if !out.contains(&resolved) {
+            out.push(resolved);
+        }
+    }
+    for child in node.children() {
+        collect_image_srcs(child, base_url, out);
+    }
+}
+
+// Fetch and decode all images referenced by the layout tree.
+// Returns a map from resolved URL to peniko::ImageData (RGBA8).
+fn load_images(root: &LayoutBox, base_url: Option<&str>, identity: &Identity) -> ImageCache {
+    let mut urls = Vec::new();
+    collect_image_srcs(root, base_url, &mut urls);
+
+    let mut cache = ImageCache::new();
+    for url in urls {
+        match crate::fetch::fetch_bytes(&url, identity) {
+            Ok(bytes) => match image::load_from_memory(&bytes) {
+                Ok(dyn_img) => {
+                    let rgba = dyn_img.to_rgba8();
+                    let width = rgba.width();
+                    let height = rgba.height();
+                    let pixels: Vec<u8> = rgba.into_raw();
+                    let img_data = peniko::ImageData {
+                        data: peniko::Blob::from(pixels),
+                        format: peniko::ImageFormat::Rgba8,
+                        alpha_type: peniko::ImageAlphaType::Alpha,
+                        width,
+                        height,
+                    };
+                    cache.insert(url, img_data);
+                }
+                Err(e) => eprintln!("Aurora: failed to decode image {url}: {e}"),
+            },
+            Err(e) => eprintln!("Aurora: failed to fetch image {url}: {e}"),
+        }
+    }
+
+    cache
 }

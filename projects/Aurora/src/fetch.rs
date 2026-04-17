@@ -166,7 +166,10 @@ impl ParsedUrl {
     fn validate(&self) -> Result<(), FetchError> {
         // RUST FUNDAMENTAL: `()` is the unit type, so `Result<(), E>` means "success carries no extra data, only the fact of success".
         if self.host.is_empty()
-            || self.host.chars().any(|ch| ch.is_ascii_control() || ch.is_ascii_whitespace())
+            || self
+                .host
+                .chars()
+                .any(|ch| ch.is_ascii_control() || ch.is_ascii_whitespace())
             || self.path_and_query.chars().any(|ch| ch.is_ascii_control())
         {
             return Err(FetchError::InvalidUrl(format!(
@@ -185,7 +188,10 @@ impl Display for FetchError {
         // RUST FUNDAMENTAL: Implementing `Display` gives a type human-readable `{}` formatting.
         match self {
             FetchError::UnsupportedScheme(scheme) => {
-                write!(f, "unsupported URL scheme: {scheme} (only http:// and https:// are supported)")
+                write!(
+                    f,
+                    "unsupported URL scheme: {scheme} (only http:// and https:// are supported)"
+                )
             }
             FetchError::InvalidUrl(url) => write!(f, "invalid URL: {url}"),
             FetchError::Io(error) => write!(f, "network error: {error}"),
@@ -211,8 +217,8 @@ impl From<rustls::Error> for FetchError {
     }
 }
 
-use opus::domain::{Capability, Identity};
 use flate2::read::GzDecoder;
+use opus::domain::{Capability, Identity};
 
 pub fn fetch_html(url: &str, identity: &Identity) -> Result<String, FetchError> {
     // RUST FUNDAMENTAL: Small wrapper functions are useful when two public APIs share the same implementation today
@@ -227,7 +233,10 @@ pub fn fetch_string(url: &str, identity: &Identity) -> Result<String, FetchError
         return std::fs::read_to_string(path).map_err(FetchError::Io);
     }
 
-    if !identity.default_capabilities.contains(&Capability::NetworkAccess) {
+    if !identity
+        .default_capabilities
+        .contains(&Capability::NetworkAccess)
+    {
         return Err(FetchError::InvalidUrl(format!(
             "Identity {} lacks network.access capability",
             identity.did
@@ -242,7 +251,10 @@ pub fn fetch_bytes(url: &str, identity: &Identity) -> Result<Vec<u8>, FetchError
         return std::fs::read(path).map_err(FetchError::Io);
     }
 
-    if !identity.default_capabilities.contains(&Capability::NetworkAccess) {
+    if !identity
+        .default_capabilities
+        .contains(&Capability::NetworkAccess)
+    {
         return Err(FetchError::InvalidUrl(format!(
             "Identity {} lacks network.access capability",
             identity.did
@@ -258,7 +270,9 @@ fn fetch_with_redirects(url: &str, remaining_redirects: usize) -> Result<String,
     if is_redirect(response.status_code) {
         // RUST FUNDAMENTAL: Recursive retry helpers like this are a clean way to model bounded redirect chains.
         if remaining_redirects == 0 {
-            return Err(FetchError::InvalidResponse("too many redirects".to_string()));
+            return Err(FetchError::InvalidResponse(
+                "too many redirects".to_string(),
+            ));
         }
         let location = header_value(&response.headers, "location")
             .ok_or_else(|| FetchError::InvalidResponse("missing location header".to_string()))?;
@@ -289,13 +303,18 @@ fn fetch_with_redirects(url: &str, remaining_redirects: usize) -> Result<String,
     Ok(String::from_utf8_lossy(&body).to_string())
 }
 
-fn fetch_bytes_with_redirects(url: &str, remaining_redirects: usize) -> Result<Vec<u8>, FetchError> {
+fn fetch_bytes_with_redirects(
+    url: &str,
+    remaining_redirects: usize,
+) -> Result<Vec<u8>, FetchError> {
     let parsed = ParsedUrl::parse(url)?;
     let response = send_request(&parsed)?;
 
     if is_redirect(response.status_code) {
         if remaining_redirects == 0 {
-            return Err(FetchError::InvalidResponse("too many redirects".to_string()));
+            return Err(FetchError::InvalidResponse(
+                "too many redirects".to_string(),
+            ));
         }
         let location = header_value(&response.headers, "location")
             .ok_or_else(|| FetchError::InvalidResponse("missing location header".to_string()))?;
@@ -338,7 +357,11 @@ pub fn resolve_relative_url(base: &str, relative: &str) -> Result<String, FetchE
     let base_parsed = ParsedUrl::parse(base)?;
 
     if relative.starts_with("//") {
-        return Ok(format!("{}{}", base_parsed.scheme_prefix(), relative.trim_start_matches("//")));
+        return Ok(format!(
+            "{}{}",
+            base_parsed.scheme_prefix(),
+            relative.trim_start_matches("//")
+        ));
     }
 
     if relative.starts_with('/') {
@@ -452,11 +475,11 @@ fn read_response_bytes<R: Read>(reader: &mut R) -> Result<HttpResponse, FetchErr
             return Err(FetchError::Io(e));
         }
     }
-    
+
     if response.is_empty() {
         return Err(FetchError::InvalidResponse("empty response".to_string()));
     }
-    
+
     HttpResponse::parse(&response)
 }
 
@@ -473,7 +496,10 @@ fn tls_config() -> Arc<ClientConfig> {
 fn require_file_access(identity: &Identity) -> Result<(), FetchError> {
     // RUST FUNDAMENTAL: Capability checks like this are ordinary boolean conditions in Rust;
     // the type system does not enforce them automatically, so explicit guard code matters.
-    if identity.default_capabilities.contains(&Capability::ReadWorkspace) {
+    if identity
+        .default_capabilities
+        .contains(&Capability::ReadWorkspace)
+    {
         Ok(())
     } else {
         Err(FetchError::InvalidUrl(format!(
@@ -528,8 +554,8 @@ impl HttpResponse {
             .unwrap_or(false)
         {
             decode_chunked_body(body_bytes)?
-        } else if let Some(length) = header_value(&headers, "content-length")
-            .and_then(|value| value.parse::<usize>().ok())
+        } else if let Some(length) =
+            header_value(&headers, "content-length").and_then(|value| value.parse::<usize>().ok())
         {
             body_bytes[..body_bytes.len().min(length)].to_vec()
         } else {
@@ -600,14 +626,18 @@ fn decode_chunked_body(body: &[u8]) -> Result<Vec<u8>, FetchError> {
 
         let chunk_end = cursor + size;
         if chunk_end > body.len() {
-            return Err(FetchError::InvalidResponse("truncated chunk body".to_string()));
+            return Err(FetchError::InvalidResponse(
+                "truncated chunk body".to_string(),
+            ));
         }
         decoded.extend_from_slice(&body[cursor..chunk_end]);
         // RUST FUNDAMENTAL: `extend_from_slice` appends bytes efficiently from one slice into a `Vec<u8>`.
         cursor = chunk_end;
 
         if body.get(cursor..cursor + 2) != Some(b"\r\n".as_slice()) {
-            return Err(FetchError::InvalidResponse("missing chunk terminator".to_string()));
+            return Err(FetchError::InvalidResponse(
+                "missing chunk terminator".to_string(),
+            ));
         }
         cursor += 2;
     }
@@ -626,7 +656,6 @@ fn find_crlf(bytes: &[u8], start: usize) -> Option<usize> {
 fn is_redirect(status_code: u16) -> bool {
     matches!(status_code, 301 | 302 | 303 | 307 | 308)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -678,7 +707,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.status_code, 200);
-        assert_eq!(String::from_utf8_lossy(&response.body), "<html><body>cats</body></html>");
+        assert_eq!(
+            String::from_utf8_lossy(&response.body),
+            "<html><body>cats</body></html>"
+        );
     }
 
     #[test]

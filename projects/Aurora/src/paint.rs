@@ -131,8 +131,20 @@ impl FrameBuffer {
         let x1_f = (rect.x + rect.width) / CELL_WIDTH_PX;
         let y1_f = (rect.y + rect.height) / CELL_HEIGHT_PX;
         // Handle fractional coordinates (round up if partial cell)
-        let x1 = if x1_f.fract() > 0.0 { x1_f.ceil() as usize } else { x1_f as usize }.saturating_sub(1).max(x0);
-        let y1 = if y1_f.fract() > 0.0 { y1_f.ceil() as usize } else { y1_f as usize }.saturating_sub(1).max(y0);
+        let x1 = if x1_f.fract() > 0.0 {
+            x1_f.ceil() as usize
+        } else {
+            x1_f as usize
+        }
+        .saturating_sub(1)
+        .max(x0);
+        let y1 = if y1_f.fract() > 0.0 {
+            y1_f.ceil() as usize
+        } else {
+            y1_f as usize
+        }
+        .saturating_sub(1)
+        .max(y0);
         // RUST FUNDAMENTAL: `saturating_sub(1)` avoids underflow if the right or bottom edge would otherwise compute to zero.
 
         // Skip if box is completely off-screen or invalid
@@ -281,7 +293,12 @@ fn debug_box(
         ("viewport".to_string(), '#', '=', '#')
     } else if layout_box.is_image() {
         let alt = layout_box.image_alt().unwrap_or("img");
-        (format!("img(\"{}\")", truncate_label(alt, 12)), '@', '=', '!')
+        (
+            format!("img(\"{}\")", truncate_label(alt, 12)),
+            '@',
+            '=',
+            '!',
+        )
     } else if let Some(tag_name) = layout_box.tag_name() {
         let label = format!("block<{}>", tag_name);
         (label, '+', '-', '|')
@@ -390,7 +407,8 @@ fn paint_surface(layout_box: &LayoutBox, tag_name: &str, framebuffer: &mut Frame
     let rect = layout_box.rect();
     let styles = layout_box.styles();
     let border_width = styles.border_width();
-    let background_char = background_fill_char(tag_name, styles.background_color(), styles.get("color"));
+    let background_char =
+        background_fill_char(tag_name, styles.background_color(), styles.get("color"));
     let border_char = border_fill_char(tag_name, styles.border_color(), styles.get("color"));
     // RUST FUNDAMENTAL: Helper functions return chars rather than strings because each terminal cell stores exactly one character.
 
@@ -398,7 +416,11 @@ fn paint_surface(layout_box: &LayoutBox, tag_name: &str, framebuffer: &mut Frame
         framebuffer.fill_rect(rect, background_char);
     }
 
-    if border_width.top > 0.0 || border_width.right > 0.0 || border_width.bottom > 0.0 || border_width.left > 0.0 {
+    if border_width.top > 0.0
+        || border_width.right > 0.0
+        || border_width.bottom > 0.0
+        || border_width.left > 0.0
+    {
         framebuffer.fill_rect(
             Rect {
                 x: rect.x,
@@ -443,7 +465,11 @@ fn paint_input(layout_box: &LayoutBox, tag_name: &str, framebuffer: &mut FrameBu
     let label = if tag_name == "button" {
         layout_box.styles().get("value").unwrap_or("button")
     } else {
-        layout_box.styles().get("placeholder").or_else(|| layout_box.styles().get("value")).unwrap_or("...")
+        layout_box
+            .styles()
+            .get("placeholder")
+            .or_else(|| layout_box.styles().get("value"))
+            .unwrap_or("...")
     };
     // RUST FUNDAMENTAL: `or_else(...)` defers the second lookup until the placeholder is missing.
 
@@ -451,7 +477,9 @@ fn paint_input(layout_box: &LayoutBox, tag_name: &str, framebuffer: &mut FrameBu
     // RUST FUNDAMENTAL: `format!` builds an owned `String`, unlike `println!` which writes output directly.
     framebuffer.draw_outline(rect, '[', '-', ']');
     let cell_x = (rect.x / CELL_WIDTH_PX).ceil().max(0.0) as usize;
-    let cell_y = ((rect.y + rect.height / 2.0) / CELL_HEIGHT_PX).floor().max(0.0) as usize;
+    let cell_y = ((rect.y + rect.height / 2.0) / CELL_HEIGHT_PX)
+        .floor()
+        .max(0.0) as usize;
     framebuffer.draw_label_at_cell(cell_x + 1, cell_y, &display_label);
 }
 
@@ -467,7 +495,9 @@ fn paint_image(layout_box: &LayoutBox, framebuffer: &mut FrameBuffer) {
         .unwrap_or("image");
     let label = format!("[{}]", truncate_label(label, 14));
     let cell_x = (rect.x / CELL_WIDTH_PX).ceil().max(0.0) as usize;
-    let cell_y = ((rect.y + rect.height / 2.0) / CELL_HEIGHT_PX).floor().max(0.0) as usize;
+    let cell_y = ((rect.y + rect.height / 2.0) / CELL_HEIGHT_PX)
+        .floor()
+        .max(0.0) as usize;
     framebuffer.draw_label_at_cell(cell_x, cell_y, &label);
 }
 
@@ -486,7 +516,10 @@ fn truncate_label(value: &str, max_chars: usize) -> String {
 fn box_fill_char(tag_name: &str, color: Option<&str>) -> char {
     if let Some(color) = color {
         // RUST FUNDAMENTAL: `.next()` returns an `Option<char>` because the string might be empty.
-        return color.chars().next().unwrap_or(tag_name.chars().next().unwrap_or('#'));
+        return color
+            .chars()
+            .next()
+            .unwrap_or(tag_name.chars().next().unwrap_or('#'));
     }
 
     match tag_name {
@@ -500,11 +533,19 @@ fn box_fill_char(tag_name: &str, color: Option<&str>) -> char {
     }
 }
 
-fn background_fill_char(tag_name: &str, background_color: Option<&str>, color: Option<&str>) -> char {
+fn background_fill_char(
+    tag_name: &str,
+    background_color: Option<&str>,
+    color: Option<&str>,
+) -> char {
     if let Some(bg) = background_color {
         let bg_lower = bg.to_lowercase();
         // RUST FUNDAMENTAL: Lowercasing once avoids repeating case-insensitive comparisons against several spellings.
-        if bg_lower == "white" || bg_lower == "#fff" || bg_lower == "#ffffff" || bg_lower == "transparent" {
+        if bg_lower == "white"
+            || bg_lower == "#fff"
+            || bg_lower == "#ffffff"
+            || bg_lower == "transparent"
+        {
             return ' ';
         }
         return bg.chars().next().unwrap_or(' ');
@@ -528,7 +569,7 @@ fn border_fill_char(tag_name: &str, border_color: Option<&str>, color: Option<&s
 
 #[cfg(test)]
 mod tests {
-    use super::{Painter, DebugPainter};
+    use super::{DebugPainter, Painter};
     use crate::css::Stylesheet;
     use crate::dom::Node;
     use crate::layout::LayoutTree;
@@ -563,7 +604,8 @@ mod tests {
                 Node::element("p", vec![Node::text("Body")]),
             ],
         )]);
-        let stylesheet = Stylesheet::parse("body { color: cyan; } p { display: inline; color: paper-white; }");
+        let stylesheet =
+            Stylesheet::parse("body { color: cyan; } p { display: inline; color: paper-white; }");
         let style_tree = StyleTree::from_dom(&dom, &stylesheet);
         let layout = LayoutTree::from_style_tree(&style_tree);
 
@@ -600,7 +642,9 @@ mod tests {
             "body",
             vec![Node::element("p", vec![Node::text("Link")])],
         )]);
-        let stylesheet = Stylesheet::parse("p { display: inline; text-decoration: underline; line-height: 28px; }");
+        let stylesheet = Stylesheet::parse(
+            "p { display: inline; text-decoration: underline; line-height: 28px; }",
+        );
         let style_tree = StyleTree::from_dom(&dom, &stylesheet);
         let layout = LayoutTree::from_style_tree(&style_tree);
 
@@ -635,7 +679,9 @@ mod tests {
             "body",
             vec![Node::element("section", vec![Node::text("Hidden")])],
         )]);
-        let stylesheet = Stylesheet::parse("section { visibility: hidden; background-color: sand; height: 40px; }");
+        let stylesheet = Stylesheet::parse(
+            "section { visibility: hidden; background-color: sand; height: 40px; }",
+        );
         let style_tree = StyleTree::from_dom(&dom, &stylesheet);
         let layout = LayoutTree::from_style_tree_with_viewport_width(&style_tree, 160.0);
 
@@ -671,7 +717,10 @@ mod tests {
     fn debug_painter_lists_all_boxes() {
         let dom = Node::document(vec![Node::element(
             "body",
-            vec![Node::element("section", vec![Node::element("p", vec![Node::text("Text")])])],
+            vec![Node::element(
+                "section",
+                vec![Node::element("p", vec![Node::text("Text")])],
+            )],
         )]);
         let stylesheet = Stylesheet::parse("");
         let style_tree = StyleTree::from_dom(&dom, &stylesheet);

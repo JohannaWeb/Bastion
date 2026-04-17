@@ -116,10 +116,10 @@ impl GlyphAtlas {
                     // Read alpha value from bitmap
                     let alpha = bitmap[src];
                     // Write white text with varying alpha (standard glyph rendering)
-                    self.texture[dst] = 255;         // Red channel
-                    self.texture[dst + 1] = 255;     // Green channel
-                    self.texture[dst + 2] = 255;     // Blue channel
-                    self.texture[dst + 3] = alpha;   // Alpha channel (from bitmap)
+                    self.texture[dst] = 255; // Red channel
+                    self.texture[dst + 1] = 255; // Green channel
+                    self.texture[dst + 2] = 255; // Blue channel
+                    self.texture[dst + 3] = alpha; // Alpha channel (from bitmap)
                 }
             }
         }
@@ -278,14 +278,7 @@ mod tests {
         // Create a simple glyph bitmap
         let bitmap = vec![255; 16 * 16];
 
-        atlas.register_glyph(
-            'A',
-            &bitmap,
-            16, 16,
-            0, 0,
-            10.0,
-            0, 0,
-        );
+        atlas.register_glyph('A', &bitmap, 16, 16, 0, 0, 10.0, 0, 0);
 
         let metrics = atlas.get_glyph('A');
         assert!(metrics.is_some());

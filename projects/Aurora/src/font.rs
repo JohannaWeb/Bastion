@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 // Import glyph atlas and packer
 // RUST FUNDAMENTAL: `crate::...` starts from this crate's root module.
 // That makes the import path explicit and stable even if the current file's local module nesting changes.
-use crate::atlas::{GlyphAtlas, AtlasPacker};
+use crate::atlas::{AtlasPacker, GlyphAtlas};
 
 // Import font and scaling types from ab_glyph
 // RUST FUNDAMENTAL: Traits let Rust code work with shared behavior across different concrete types.
@@ -22,7 +22,7 @@ use ab_glyph::{Font, FontRef, PxScale};
 // Import font shaping from rustybuzz
 // RUST FUNDAMENTAL: Text shaping is the step between Unicode characters and actual rendered glyph placement.
 // A shaped result may not be one glyph per character, because ligatures, combining marks, and script-specific rules can change the mapping.
-use rustybuzz::{Face, UnicodeBuffer, shape};
+use rustybuzz::{shape, Face, UnicodeBuffer};
 
 // Global glyph atlas (lazily initialized on first access)
 // RUST FUNDAMENTAL: `static` items live for the entire duration of the program.
@@ -145,14 +145,7 @@ impl AtlasBuilder {
                     // Register space with zero bitmap
                     // RUST FUNDAMENTAL: A glyph can still participate in layout even if it has no pixels to draw,
                     // because advance width matters for text spacing.
-                    atlas.register_glyph(
-                        ch,
-                        &[],
-                        0, 0,
-                        0, 0,
-                        advance,
-                        0, 0,
-                    );
+                    atlas.register_glyph(ch, &[], 0, 0, 0, 0, advance, 0, 0);
                 }
             }
         }

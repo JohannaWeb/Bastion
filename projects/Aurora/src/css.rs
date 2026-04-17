@@ -70,15 +70,20 @@ impl Stylesheet {
 
     // Parse CSS stylesheet source string into rules and variables
     pub fn parse(source: &str) -> Self {
+        Self::do_parse(source, None)
+    }
+
+    // Internal parser that optionally resolves @import rules via fetch
+    fn do_parse(source: &str, fetch_ctx: Option<(&str, &opus::domain::Identity)>) -> Self {
         // Initialize result vectors
         let mut rules = Vec::new();
         // Map for CSS custom properties (variables)
         // RUST FUNDAMENTAL: Mutable local variables like these are common in parser-style code that accumulates results incrementally.
         let mut variables = BTreeMap::new();
 
-        // Remove @media, @keyframes, @font-face and other at-rules first
-        // RUST FUNDAMENTAL: Preprocessing input into a simpler form is a common parsing technique.
-        let stripped = strip_at_rules(source);
+        // Remove @media, @keyframes, @font-face and other at-rules first;
+        // when a fetch context is available, @import URLs are fetched and inlined.
+        let stripped = strip_at_rules(source, fetch_ctx, 0);
 
         // Split on '}' to separate rule blocks, tracking source order
         // RUST FUNDAMENTAL: `.enumerate()` works on any iterator and gives each item a monotonically increasing index.
@@ -120,7 +125,11 @@ impl Stylesheet {
                     // Trim and keep property name
                     let name = name.trim().to_string();
                     // Trim value and remove !important flag
-                    let value = value.trim().trim_end_matches("!important").trim().to_string();
+                    let value = value
+                        .trim()
+                        .trim_end_matches("!important")
+                        .trim()
+                        .to_string();
 
                     // Store CSS custom properties (var definitions like --color: blue)
                     // RUST FUNDAMENTAL: String methods like `starts_with` let parser code express tiny lexical rules directly.
@@ -169,12 +178,18 @@ impl Stylesheet {
         Self { rules, variables }
     }
 
-    pub fn from_dom(document: &NodePtr, base_url: Option<&str>, identity: &opus::domain::Identity) -> Self {
+    pub fn from_dom(
+        document: &NodePtr,
+        base_url: Option<&str>,
+        identity: &opus::domain::Identity,
+    ) -> Self {
         // RUST FUNDAMENTAL: This helper gathers stylesheet text first, then parses once at the end.
         // Separating collection from parsing keeps each phase simpler.
         let mut source = String::new();
         collect_styles(document, base_url, identity, &mut source);
-        Self::parse(&source)
+        // Pass fetch context so @import rules inside fetched CSS are also resolved.
+        let fetch_ctx = base_url.map(|b| (b, identity));
+        Self::do_parse(&source, fetch_ctx)
     }
 
     pub fn styles_for(&self, element: &ElementData, ancestors: &[ElementData]) -> StyleMap {
@@ -196,9 +211,7 @@ impl Stylesheet {
                 // Resolve CSS variables in the value
                 let resolved_value = self.resolve_variables(&declaration.value);
                 // RUST FUNDAMENTAL: Accessing the tuple field `.0` exposes the inner `BTreeMap` of the newtype wrapper.
-                styles
-                    .0
-                    .insert(declaration.name.clone(), resolved_value);
+                styles.0.insert(declaration.name.clone(), resolved_value);
             }
         }
 
@@ -212,7 +225,7 @@ impl Stylesheet {
         let mut iterations = 0;
         // RUST FUNDAMENTAL: A `const` inside a function is still a compile-time constant,
         // but it stays scoped to the function that uses it.
-        const MAX_ITERATIONS: usize = 100;  // Prevent infinite loops
+        const MAX_ITERATIONS: usize = 100; // Prevent infinite loops
 
         loop {
             iterations += 1;
@@ -244,7 +257,7 @@ impl Stylesheet {
             if paren_depth != 0 {
                 // RUST FUNDAMENTAL: Early `break` on malformed syntax is a simple recovery strategy:
                 // leave the unresolved text as-is rather than panicking.
-                break;  // Unmatched parens
+                break; // Unmatched parens
             }
 
             let var_content = &result[start + 4..end_pos];
@@ -469,7 +482,6 @@ pub enum AlignItems {
     FlexEnd,
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BoxSizing {
     #[default]
@@ -567,10 +579,18 @@ impl StyleMap {
     pub fn margin(&self) -> Margin {
         let mut margin = parse_margin_shorthand(self.get("margin"));
         // RUST FUNDAMENTAL: Repeated `if let Some(...)` overrides are a straightforward way to express CSS shorthand-then-longhand behavior.
-        if let Some(top) = self.get("margin-top").and_then(parse_length_px) { margin.top = top; }
-        if let Some(right) = self.get("margin-right") { margin.right = parse_margin_value(right); }
-        if let Some(bottom) = self.get("margin-bottom").and_then(parse_length_px) { margin.bottom = bottom; }
-        if let Some(left) = self.get("margin-left") { margin.left = parse_margin_value(left); }
+        if let Some(top) = self.get("margin-top").and_then(parse_length_px) {
+            margin.top = top;
+        }
+        if let Some(right) = self.get("margin-right") {
+            margin.right = parse_margin_value(right);
+        }
+        if let Some(bottom) = self.get("margin-bottom").and_then(parse_length_px) {
+            margin.bottom = bottom;
+        }
+        if let Some(left) = self.get("margin-left") {
+            margin.left = parse_margin_value(left);
+        }
         margin
     }
 
@@ -591,7 +611,8 @@ impl StyleMap {
     }
 
     pub fn background_color(&self) -> Option<&str> {
-        self.get("background-color").or_else(|| self.get("background"))
+        self.get("background-color")
+            .or_else(|| self.get("background"))
     }
 
     pub fn border_color(&self) -> Option<&str> {
@@ -628,27 +649,60 @@ impl StyleMap {
     }
 
     /// Resolve width with support for %, rem, em, vw units.
-    pub fn width_resolved(&self, available_width: f32, font_size: f32, root_font_size: f32, viewport_width: f32) -> Option<f32> {
+    pub fn width_resolved(
+        &self,
+        available_width: f32,
+        font_size: f32,
+        root_font_size: f32,
+        viewport_width: f32,
+    ) -> Option<f32> {
         // RUST FUNDAMENTAL: The `?` operator on `Option` means "return `None` immediately if the property is missing".
         let raw = self.get("width")?;
         // RUST FUNDAMENTAL: Returning early for special CSS keywords keeps the normal numeric path simpler.
-        if raw == "auto" { return None; }
+        if raw == "auto" {
+            return None;
+        }
         // RUST FUNDAMENTAL: `.map(...)` transforms the successful parsed length while preserving the `Option` wrapper.
-        parse_length_value(raw).map(|lv| lv.to_px(available_width, font_size, root_font_size, viewport_width, 0.0))
+        parse_length_value(raw).map(|lv| {
+            lv.to_px(
+                available_width,
+                font_size,
+                root_font_size,
+                viewport_width,
+                0.0,
+            )
+        })
     }
 
     /// Resolve height with support for %, rem, em, vh units.
-    pub fn height_resolved(&self, available_height: f32, font_size: f32, root_font_size: f32, viewport_height: f32) -> Option<f32> {
+    pub fn height_resolved(
+        &self,
+        available_height: f32,
+        font_size: f32,
+        root_font_size: f32,
+        viewport_height: f32,
+    ) -> Option<f32> {
         let raw = self.get("height")?;
-        if raw == "auto" || raw.contains("calc(") { return None; }
-        parse_length_value(raw).map(|lv| lv.to_px(available_height, font_size, root_font_size, 0.0, viewport_height))
+        if raw == "auto" || raw.contains("calc(") {
+            return None;
+        }
+        parse_length_value(raw).map(|lv| {
+            lv.to_px(
+                available_height,
+                font_size,
+                root_font_size,
+                0.0,
+                viewport_height,
+            )
+        })
     }
 
     /// Resolve font-size with support for rem, em, % units.
     /// parent_font_size is used for em/% resolution.
     pub fn font_size_resolved(&self, parent_font_size: f32, root_font_size: f32) -> Option<f32> {
         let raw = self.get("font-size")?;
-        parse_length_value(raw).map(|lv| lv.to_px(parent_font_size, parent_font_size, root_font_size, 0.0, 0.0))
+        parse_length_value(raw)
+            .map(|lv| lv.to_px(parent_font_size, parent_font_size, root_font_size, 0.0, 0.0))
     }
 
     pub fn font_weight(&self) -> &str {
@@ -716,19 +770,19 @@ impl StyleMap {
 
         let mut result = String::new();
         let mut last_end = 0;
-        
+
         // Very basic var() parser: find "var(--name)"
         // Note: Real CSS allows fallback: var(--name, fallback)
         // RUST FUNDAMENTAL: This loop keeps slicing from `last_end` onward, which is a common incremental parsing pattern.
         while let Some(start) = value[last_end..].find("var(") {
             let start = last_end + start;
             result.push_str(&value[last_end..start]);
-            
+
             let var_content_start = start + 4;
             if let Some(end) = value[var_content_start..].find(')') {
                 let end = var_content_start + end;
                 let var_expr = value[var_content_start..end].trim();
-                
+
                 // Handle fallback: var(--name, fallback)
                 let (var_name, _fallback) = if let Some((name, fall)) = var_expr.split_once(',') {
                     (name.trim(), Some(fall.trim()))
@@ -742,7 +796,7 @@ impl StyleMap {
                     // If no value and no fallback, keep the var() expr or empty?
                     // Standard says it should be 'invalid at computed value time'.
                     // We'll leave it as is for now.
-                    result.push_str(&value[start..end+1]);
+                    result.push_str(&value[start..end + 1]);
                 }
                 last_end = end + 1;
             } else {
@@ -905,7 +959,11 @@ impl SimpleSelector {
 
         Some(Self {
             // RUST FUNDAMENTAL: Conditional expressions can construct optional fields directly.
-            tag_name: if tag_name.is_empty() { None } else { Some(tag_name) },
+            tag_name: if tag_name.is_empty() {
+                None
+            } else {
+                Some(tag_name)
+            },
             id,
             class_names,
         })
@@ -925,11 +983,19 @@ impl SimpleSelector {
         }
 
         if !self.class_names.is_empty() {
-            let classes = element.attributes.get("class").map(|s| s.as_str()).unwrap_or("");
+            let classes = element
+                .attributes
+                .get("class")
+                .map(|s| s.as_str())
+                .unwrap_or("");
             // RUST FUNDAMENTAL: Collecting into `Vec<&str>` here borrows slices from the original class string;
             // it does not allocate owned strings for each class token.
             let element_classes: Vec<&str> = classes.split_whitespace().collect();
-            if !self.class_names.iter().all(|cn| element_classes.contains(&cn.as_str())) {
+            if !self
+                .class_names
+                .iter()
+                .all(|cn| element_classes.contains(&cn.as_str()))
+            {
                 return false;
             }
         }
@@ -1039,15 +1105,24 @@ fn strip_pseudo_suffix(s: &str) -> &str {
 
 /// Remove @-rule blocks (@media, @keyframes, @font-face, etc.) from CSS source.
 /// These contain nested braces that break the simple `split('}')` parser.
-fn strip_at_rules(source: &str) -> String {
+/// When `fetch_ctx` is Some, @import URLs are fetched and prepended to the output.
+/// `depth` limits recursion when fetching imported sheets (max 3 levels).
+fn strip_at_rules(
+    source: &str,
+    fetch_ctx: Option<(&str, &opus::domain::Identity)>,
+    depth: u32,
+) -> String {
     // RUST FUNDAMENTAL: `String::with_capacity(...)` preallocates space when you have a decent size estimate,
     // which can reduce repeated reallocations during building.
     let mut result = String::with_capacity(source.len());
+    // Accumulate imported CSS to prepend (lower specificity than the importing sheet).
+    let mut imports = String::new();
     let mut chars = source.chars().peekable();
 
     while let Some(ch) = chars.next() {
         if ch == '@' {
-            // Consume the at-keyword and optional whitespace
+            // Collect the at-keyword content up to the first '{' or ';'.
+            let mut keyword_buf = String::new();
             let mut found_brace = false;
             for c in chars.by_ref() {
                 // RUST FUNDAMENTAL: `.by_ref()` lets the `for` loop borrow the iterator mutably
@@ -1056,32 +1131,85 @@ fn strip_at_rules(source: &str) -> String {
                     found_brace = true;
                     break;
                 } else if c == ';' {
-                    // Simple at-rule (e.g. @import, @charset) — no block, just skip
+                    // Simple at-rule (e.g. @import, @charset) — no block
                     break;
+                } else {
+                    keyword_buf.push(c);
                 }
             }
             if found_brace {
                 // Skip the entire block, tracking nested braces
-                let mut depth = 1usize;
+                let mut depth_count = 1usize;
                 for c in chars.by_ref() {
                     match c {
-                        '{' => depth += 1,
+                        '{' => depth_count += 1,
                         '}' => {
-                            depth -= 1;
-                            if depth == 0 {
+                            depth_count -= 1;
+                            if depth_count == 0 {
                                 break;
                             }
                         }
                         _ => {}
                     }
                 }
+            } else {
+                // Simple at-rule: check for @import and fetch when context is available.
+                let keyword_trimmed = keyword_buf.trim_start();
+                if keyword_trimmed.to_ascii_lowercase().starts_with("import") && depth < 3 {
+                    let after_import = keyword_trimmed["import".len()..].trim();
+                    if let (Some(url), Some((base, identity))) =
+                        (extract_import_url(after_import), fetch_ctx)
+                    {
+                        if let Ok(resolved) = crate::fetch::resolve_relative_url(base, &url) {
+                            if let Ok(fetched) = crate::fetch::fetch_string(&resolved, identity) {
+                                let inner = strip_at_rules(
+                                    &fetched,
+                                    Some((&resolved, identity)),
+                                    depth + 1,
+                                );
+                                imports.push_str(&inner);
+                                imports.push('\n');
+                            }
+                        }
+                    }
+                }
+                // Other simple at-rules (@charset, @namespace) are discarded.
             }
         } else {
             result.push(ch);
         }
     }
 
-    result
+    // Prepend imported rules so they have lower cascade order than the importing sheet.
+    if imports.is_empty() {
+        result
+    } else {
+        imports + &result
+    }
+}
+
+/// Extract a URL string from an @import argument.
+/// Handles: `url("...")`, `url('...')`, `url(...)`, `"..."`, `'...'`
+fn extract_import_url(s: &str) -> Option<String> {
+    let s = s.trim();
+    if let Some(rest) = s.strip_prefix("url(") {
+        let inner = rest.trim_end_matches(')').trim();
+        let inner = inner.trim_matches('"').trim_matches('\'');
+        if !inner.is_empty() {
+            return Some(inner.to_string());
+        }
+    }
+    if let Some(inner) = s.strip_prefix('"') {
+        if let Some(inner) = inner.strip_suffix('"') {
+            return Some(inner.to_string());
+        }
+    }
+    if let Some(inner) = s.strip_prefix('\'') {
+        if let Some(inner) = inner.strip_suffix('\'') {
+            return Some(inner.to_string());
+        }
+    }
+    None
 }
 
 fn parse_margin_shorthand(value: Option<&str>) -> Margin {
@@ -1089,9 +1217,7 @@ fn parse_margin_shorthand(value: Option<&str>) -> Margin {
         return Margin::zero();
     };
 
-    let parts = value
-        .split_whitespace()
-        .collect::<Vec<_>>();
+    let parts = value.split_whitespace().collect::<Vec<_>>();
 
     // RUST FUNDAMENTAL: Matching on `parts.as_slice()` lets the code branch by the exact number of shorthand values present.
     match parts.as_slice() {
@@ -1213,7 +1339,14 @@ pub enum LengthValue {
 
 impl LengthValue {
     /// Resolve to pixels given context.
-    pub fn to_px(self, available: f32, font_size: f32, root_font_size: f32, viewport_width: f32, viewport_height: f32) -> f32 {
+    pub fn to_px(
+        self,
+        available: f32,
+        font_size: f32,
+        root_font_size: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> f32 {
         // RUST FUNDAMENTAL: Enums plus `match` are a natural way to encode unit-specific behavior.
         match self {
             LengthValue::Px(v) => v,

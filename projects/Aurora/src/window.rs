@@ -3,6 +3,8 @@
 use crate::layout::LayoutTree;
 // Import GPU painter for Vello rendering
 use crate::gpu_paint::GpuPainter;
+// Import image cache for decoded image data
+use crate::ImageCache;
 // Import Arc for thread-safe sharing
 // RUST FUNDAMENTAL: GUI/rendering stacks often need shared ownership across async or callback-driven code,
 // which is why `Arc<T>` shows up frequently around GPU and window resources.
@@ -18,7 +20,9 @@ use vello::{
     // Import WebGPU backend
     wgpu,
     // Import Vello renderer and scene
-    Renderer, RendererOptions, Scene,
+    Renderer,
+    RendererOptions,
+    Scene,
 };
 // Import Winit window event handling
 // RUST FUNDAMENTAL: GUI frameworks often split related types into nested modules, so one `use` block can
@@ -35,7 +39,7 @@ use winit::{
 };
 
 // Open interactive window for rendering layout
-pub fn open(layout: &LayoutTree) -> Result<(), String> {
+pub fn open(layout: &LayoutTree, images: &ImageCache) -> Result<(), String> {
     // Check environment variable for screenshot output path
     // RUST FUNDAMENTAL: Environment lookups return `Result<String, VarError>` because the variable may not exist.
     let screenshot_path = std::env::var("AURORA_SCREENSHOT");
@@ -50,9 +54,10 @@ pub fn open(layout: &LayoutTree) -> Result<(), String> {
     // Create new event loop for window events
     // RUST FUNDAMENTAL: `.map_err(...)` is useful when a lower-level library has its own error type
     // but this function wants to expose a simpler `String` error.
-    let event_loop = EventLoop::new().map_err(|error| format!("failed to create event loop: {error}"))?;
-    // Create Aurora application state with layout
-    let mut app = AuroraApp::new(layout);
+    let event_loop =
+        EventLoop::new().map_err(|error| format!("failed to create event loop: {error}"))?;
+    // Create Aurora application state with layout and image cache
+    let mut app = AuroraApp::new(layout, images);
 
     // Run event loop with application
     event_loop
@@ -118,52 +123,60 @@ fn render_layout_with_text(
         // Draw background for non-text boxes
         if box_node.text().is_none() && !box_node.is_image() {
             // RUST FUNDAMENTAL: Chaining `.or_else(...).unwrap_or(...)` is a compact fallback ladder for optional values.
-            let bg_color_str = styles.get("background-color").or_else(|| styles.get("background")).unwrap_or("transparent");
+            let bg_color_str = styles
+                .get("background-color")
+                .or_else(|| styles.get("background"))
+                .unwrap_or("transparent");
             // RUST FUNDAMENTAL: `unwrap_or(...)` returns the contained `&str` or the default, so the result is no longer an `Option`.
 
             if bg_color_str != "transparent" {
                 let color = parse_screenshot_color(bg_color_str);
-                draw_rect(img,
+                draw_rect(
+                    img,
                     (rect.x as i32 + offset_x) as u32,
                     (rect.y as i32 + offset_y) as u32,
                     rect.width as u32,
                     rect.height as u32,
-                    color
+                    color,
                 );
             }
 
             let border = styles.border_width();
             // RUST FUNDAMENTAL: Storing this in a local avoids recomputing the helper for each edge check.
             if border.top > 0.0 || border.right > 0.0 || border.bottom > 0.0 || border.left > 0.0 {
-                let border_color = parse_screenshot_color(styles.get("border-color").unwrap_or("#dadce0"));
-                draw_border(img,
+                let border_color =
+                    parse_screenshot_color(styles.get("border-color").unwrap_or("#dadce0"));
+                draw_border(
+                    img,
                     (rect.x as i32 + offset_x) as u32,
                     (rect.y as i32 + offset_y) as u32,
                     rect.width as u32,
                     rect.height as u32,
-                    border_color
+                    border_color,
                 );
             }
         }
 
         // Render images as colored placeholders
         if box_node.is_image() {
-            let color = image::Rgba([220, 235, 250, 255]);  // Light blue
-            draw_rect(img,
+            let color = image::Rgba([220, 235, 250, 255]); // Light blue
+            draw_rect(
+                img,
                 (rect.x as i32 + offset_x) as u32,
                 (rect.y as i32 + offset_y) as u32,
                 rect.width as u32,
                 rect.height as u32,
-                color
+                color,
             );
 
             // Draw border
-            draw_border(img,
+            draw_border(
+                img,
                 (rect.x as i32 + offset_x) as u32,
                 (rect.y as i32 + offset_y) as u32,
                 rect.width as u32,
                 rect.height as u32,
-                image::Rgba([100, 150, 200, 255])  // Medium blue
+                image::Rgba([100, 150, 200, 255]), // Medium blue
             );
         }
 
@@ -349,11 +362,10 @@ fn parse_screenshot_color(color_str: &str) -> image::Rgba<u8> {
         "blue" => image::Rgba([0, 0, 255, 255]),
         "green" => image::Rgba([0, 128, 0, 255]),
         "gray" | "grey" => image::Rgba([128, 128, 128, 255]),
-        "coal" => image::Rgba([0x2E, 0x34, 0x40, 255]),  // Aurora color
-        _ => image::Rgba([64, 64, 64, 255]),  // Default dark gray
+        "coal" => image::Rgba([0x2E, 0x34, 0x40, 255]), // Aurora color
+        _ => image::Rgba([64, 64, 64, 255]),            // Default dark gray
     }
 }
-
 
 fn draw_rect(
     img: &mut image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
@@ -378,6 +390,7 @@ fn draw_rect(
 struct AuroraApp<'a> {
     // RUST FUNDAMENTAL: This lifetime parameter says the app may borrow a `LayoutTree` that must outlive the app itself.
     layout: &'a LayoutTree,
+    images: &'a ImageCache,
     context: RenderContext,
     renderers: Vec<Option<Renderer>>,
     surface: Option<RenderSurface<'static>>,
@@ -386,10 +399,11 @@ struct AuroraApp<'a> {
 }
 
 impl<'a> AuroraApp<'a> {
-    fn new(layout: &'a LayoutTree) -> Self {
+    fn new(layout: &'a LayoutTree, images: &'a ImageCache) -> Self {
         // RUST FUNDAMENTAL: `Self` inside an `impl` block is an alias for the enclosing type, here `AuroraApp<'a>`.
         Self {
             layout,
+            images,
             context: RenderContext::new(),
             renderers: Vec::new(),
             surface: None,
@@ -420,7 +434,7 @@ impl<'a> AuroraApp<'a> {
             transform,
             &vello::kurbo::Rect::new(0.0, 0.0, width as f64, 10000.0),
         );
-        GpuPainter::paint(self.layout.root(), &mut scene);
+        GpuPainter::paint(self.layout.root(), &mut scene, self.images);
         scene.pop_layer();
 
         let surface_texture = surface
@@ -464,15 +478,21 @@ impl<'a> AuroraApp<'a> {
             )
             .expect("failed to render to texture");
 
-        let mut encoder = device_handle.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let mut encoder = device_handle
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         // RUST FUNDAMENTAL: GPU APIs often collect commands into an encoder first and submit them later as one batch.
         surface.blitter.copy(
             &device_handle.device,
             &mut encoder,
             &surface.target_view,
-            &surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            &surface_texture
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default()),
         );
-        device_handle.queue.submit(std::iter::once(encoder.finish()));
+        device_handle
+            .queue
+            .submit(std::iter::once(encoder.finish()));
 
         surface_texture.present();
     }
@@ -484,8 +504,12 @@ impl<'a> winit::application::ApplicationHandler for AuroraApp<'a> {
             .with_title("Aurora Browser (GPU Accelerated)")
             .with_inner_size(winit::dpi::LogicalSize::new(1200.0, 900.0));
         // RUST FUNDAMENTAL: Builder-style APIs chain methods by returning the updated value each time.
-        
-        let window = Arc::new(event_loop.create_window(window_attr).expect("failed to create window"));
+
+        let window = Arc::new(
+            event_loop
+                .create_window(window_attr)
+                .expect("failed to create window"),
+        );
         self.window = Some(window.clone());
         // RUST FUNDAMENTAL: `Arc::clone` increments the reference count; it does not duplicate the underlying OS window.
 
@@ -496,13 +520,14 @@ impl<'a> winit::application::ApplicationHandler for AuroraApp<'a> {
             900,
             vello::wgpu::PresentMode::Fifo,
         ))
-            .expect("failed to create surface");
+        .expect("failed to create surface");
         // RUST FUNDAMENTAL: `block_on` runs the async surface-creation future to completion in this synchronous callback.
         self.surface = Some(surface);
-        
-        self.renderers.resize_with(self.context.devices.len(), || None);
+
+        self.renderers
+            .resize_with(self.context.devices.len(), || None);
         // RUST FUNDAMENTAL: `resize_with` fills new vector slots by calling the closure once per added element.
-        
+
         window.request_redraw();
     }
 
@@ -519,7 +544,8 @@ impl<'a> winit::application::ApplicationHandler for AuroraApp<'a> {
             }
             WindowEvent::Resized(size) => {
                 if let Some(surface) = self.surface.as_mut() {
-                    self.context.resize_surface(surface, size.width, size.height);
+                    self.context
+                        .resize_surface(surface, size.width, size.height);
                 }
                 if let Some(window) = &self.window {
                     window.request_redraw();
@@ -530,13 +556,14 @@ impl<'a> winit::application::ApplicationHandler for AuroraApp<'a> {
                     self.render();
                 }
             }
-            WindowEvent::KeyboardInput { 
-                event: KeyEvent { 
-                    logical_key, 
-                    state: ElementState::Pressed, 
-                    .. 
-                }, 
-                .. 
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key,
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
             } => {
                 // RUST FUNDAMENTAL: Pattern matching can destructure nested structs inline and ignore the rest with `..`.
                 match logical_key {

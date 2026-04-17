@@ -191,7 +191,7 @@ impl StyledNode {
                         })
                         .collect(),
                 }
-            },
+            }
             // For element nodes, apply CSS and build styled children
             Node::Element(element) => {
                 // Build ElementData for CSS selector matching
@@ -464,7 +464,8 @@ mod tests {
             vec![element("p", vec![Node::text("Text")])],
         )]);
 
-        let stylesheet = Stylesheet::parse("body { font-size: 16px; font-weight: bold; line-height: 20px; }");
+        let stylesheet =
+            Stylesheet::parse("body { font-size: 16px; font-weight: bold; line-height: 20px; }");
         let style_tree = StyleTree::from_dom(&dom, &stylesheet);
         let rendered = style_tree.to_string();
 
