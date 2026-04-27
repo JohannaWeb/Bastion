@@ -97,6 +97,24 @@ cargo test
 
 At the time of this edit, `cargo test` passes in this directory. That matters more than any marketing sentence in the README.
 
+## Docker
+
+Aurora can be built as a Docker image from the parent `projects` directory because
+it depends on the sibling `Opus` crate:
+
+```bash
+cd ..
+docker build -f Aurora/Dockerfile -t aurora .
+```
+
+From this directory, the same build is available as:
+
+```bash
+make docker-build
+```
+
+See [DOCKER.md](DOCKER.md) for run examples.
+
 ## Next Steps
 
 1. Add a real tokenizer state machine.
