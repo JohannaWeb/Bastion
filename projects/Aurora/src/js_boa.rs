@@ -143,6 +143,7 @@ impl BoaRuntime {
         let registry = NodeRegistry::new();
 
         install_globals(&mut context, &document, &registry);
+        install_dom_constructors(&mut context);
         install_document(&mut context, &document, &registry);
         install_observers(&mut context);
         install_xhr_and_fetch(&mut context);
@@ -630,6 +631,100 @@ fn install_globals(context: &mut Context, document: &NodePtr, _registry: &NodeRe
     let _ = document;
 }
 
+fn install_dom_constructors(context: &mut Context) {
+    let constructors = r#"
+        (function(global) {
+            function install(name, parentName) {
+                if (typeof global[name] !== "function") {
+                    global[name] = function() {};
+                }
+                if (!global[name].prototype) {
+                    global[name].prototype = {};
+                }
+                if (parentName && global[parentName] && global[parentName].prototype) {
+                    Object.setPrototypeOf(global[name].prototype, global[parentName].prototype);
+                }
+                global[name].prototype.constructor = global[name];
+            }
+
+            install("EventTarget");
+            install("Node", "EventTarget");
+            install("Document", "Node");
+            install("DocumentFragment", "Node");
+            install("CharacterData", "Node");
+            install("Text", "CharacterData");
+            install("Comment", "CharacterData");
+            install("Element", "Node");
+            install("HTMLElement", "Element");
+            install("HTMLAnchorElement", "HTMLElement");
+            install("HTMLBodyElement", "HTMLElement");
+            install("HTMLDivElement", "HTMLElement");
+            install("HTMLFormElement", "HTMLElement");
+            install("HTMLHeadElement", "HTMLElement");
+            install("HTMLHtmlElement", "HTMLElement");
+            install("HTMLImageElement", "HTMLElement");
+            install("HTMLInputElement", "HTMLElement");
+            install("HTMLLinkElement", "HTMLElement");
+            install("HTMLMetaElement", "HTMLElement");
+            install("HTMLOptionElement", "HTMLElement");
+            install("HTMLScriptElement", "HTMLElement");
+            install("HTMLSelectElement", "HTMLElement");
+            install("HTMLStyleElement", "HTMLElement");
+            install("HTMLTableElement", "HTMLElement");
+            install("HTMLTextAreaElement", "HTMLElement");
+        })(globalThis);
+    "#;
+    let _ = context.eval(Source::from_bytes(constructors.as_bytes()));
+}
+
+fn set_object_prototype_from_constructor(
+    obj: &JsObject,
+    constructor_name: &str,
+    context: &mut Context,
+) {
+    let global = context.global_object().clone();
+    let Ok(constructor) = global.get(JsString::from(constructor_name), context) else {
+        return;
+    };
+    let Some(constructor) = constructor.as_object() else {
+        return;
+    };
+    let Ok(prototype) = constructor.get(js_string!("prototype"), context) else {
+        return;
+    };
+    let Some(prototype) = prototype.as_object() else {
+        return;
+    };
+    let _ = obj.set_prototype(Some(prototype.clone()));
+}
+
+fn constructor_for_node(node: &Node) -> &'static str {
+    match node {
+        Node::Document { .. } => "Document",
+        Node::Text(_) => "Text",
+        Node::Element(el) => match el.tag_name.as_str() {
+            "#document-fragment" => "DocumentFragment",
+            "a" => "HTMLAnchorElement",
+            "body" => "HTMLBodyElement",
+            "div" => "HTMLDivElement",
+            "form" => "HTMLFormElement",
+            "head" => "HTMLHeadElement",
+            "html" => "HTMLHtmlElement",
+            "img" => "HTMLImageElement",
+            "input" => "HTMLInputElement",
+            "link" => "HTMLLinkElement",
+            "meta" => "HTMLMetaElement",
+            "option" => "HTMLOptionElement",
+            "script" => "HTMLScriptElement",
+            "select" => "HTMLSelectElement",
+            "style" => "HTMLStyleElement",
+            "table" => "HTMLTableElement",
+            "textarea" => "HTMLTextAreaElement",
+            _ => "HTMLElement",
+        },
+    }
+}
+
 // Mini Pipe to keep the chain readable above.
 trait Pipe: Sized {
     fn pipe<F, T>(self, f: F) -> T
@@ -901,6 +996,8 @@ fn install_document(context: &mut Context, document: &NodePtr, registry: &NodeRe
         .property(js_string!("URL"), js_string!("http://localhost/"), Attribute::all())
         .property(js_string!("domain"), js_string!("localhost"), Attribute::all())
         .property(js_string!("hidden"), false, Attribute::all())
+        .property(js_string!("nodeType"), 9, Attribute::all())
+        .property(js_string!("nodeName"), js_string!("#document"), Attribute::all())
         .property(
             js_string!("visibilityState"),
             js_string!("visible"),
@@ -1030,6 +1127,19 @@ fn install_document(context: &mut Context, document: &NodePtr, registry: &NodeRe
         )
         .function(
             NativeFunction::from_copy_closure_with_captures(
+                |_this, args, cap: &DocCapture, ctx| {
+                    let text = js_string_of(args.get(0).unwrap_or(&JsValue::undefined()));
+                    let node = Node::Text(text);
+                    let node = Rc::new(RefCell::new(node));
+                    Ok(create_js_node(node, &cap.registry, &cap.document, ctx))
+                },
+                doc_cap.clone(),
+            ),
+            js_string!("createComment"),
+            1,
+        )
+        .function(
+            NativeFunction::from_copy_closure_with_captures(
                 |_this, _args, cap: &DocCapture, ctx| {
                     let node = Node::element("#document-fragment", vec![]);
                     Ok(create_js_node(node, &cap.registry, &cap.document, ctx))
@@ -1117,11 +1227,52 @@ fn install_document(context: &mut Context, document: &NodePtr, registry: &NodeRe
         let _ = document_obj.set(js_string!("title"), JsString::from(text), false, context);
     }
 
+    let implementation = build_document_implementation(document, registry, context);
+    let _ = document_obj.set(
+        js_string!("implementation"),
+        implementation,
+        false,
+        context,
+    );
+    set_object_prototype_from_constructor(&document_obj, "Document", context);
+
     let _ = context.register_global_property(
         js_string!("document"),
         document_obj,
         Attribute::all(),
     );
+}
+
+fn build_document_implementation(
+    document: &NodePtr,
+    registry: &NodeRegistry,
+    context: &mut Context,
+) -> JsObject {
+    let doc_cap = DocCapture {
+        document: document.clone(),
+        registry: registry.clone(),
+    };
+
+    ObjectInitializer::new(context)
+        .function(
+            NativeFunction::from_copy_closure_with_captures(
+                |_this, args, cap: &DocCapture, ctx| {
+                    let title = js_string_of(args.get(0).unwrap_or(&JsValue::undefined()));
+                    let title_node = Node::element("title", vec![Node::text(title)]);
+                    let head = Node::element("head", vec![title_node]);
+                    let body = Node::element("body", vec![]);
+                    let html = Node::element("html", vec![head, body]);
+                    let doc = Node::document(vec![html]);
+                    let doc_obj = create_js_node(doc, &cap.registry, &cap.document, ctx);
+                    Ok(doc_obj)
+                },
+                doc_cap,
+            ),
+            js_string!("createHTMLDocument"),
+            1,
+        )
+        .function(return_bool(true), js_string!("hasFeature"), 2)
+        .build()
 }
 
 // ---------------------------------------------------------------------------
@@ -1609,6 +1760,11 @@ fn create_js_node(
     // we also expose setText/setHtml and explicit getters. But we also install
     // an accessor for textContent via a tiny post-build step below.
     let obj = init.build();
+    let constructor_name = {
+        let b = cap.node.borrow();
+        constructor_for_node(&b)
+    };
+    set_object_prototype_from_constructor(&obj, constructor_name, context);
 
     // Dynamic accessor installation (textContent, innerHTML, id, className, children, etc.)
     install_accessors(&obj, &cap, context);
@@ -1642,7 +1798,131 @@ fn create_js_node(
         let _ = obj.set(js_string!("length"), text_val.chars().count() as u32, false, context);
     }
 
+    install_element_reflection_properties(&obj, &cap, context);
+
     obj.into()
+}
+
+fn install_element_reflection_properties(obj: &JsObject, cap: &NodeCapture, context: &mut Context) {
+    let tag_name = {
+        let b = cap.node.borrow();
+        match &*b {
+            Node::Element(el) => el.tag_name.clone(),
+            _ => return,
+        }
+    };
+
+    for attr in ["type", "name", "value", "href", "src", "rel", "target", "alt"] {
+        install_attribute_reflector(obj, cap, context, attr, attr, "");
+    }
+
+    if tag_name == "input" {
+        install_bool_attribute_reflector(obj, cap, context, "checked", "checked");
+        install_bool_attribute_reflector(obj, cap, context, "disabled", "disabled");
+        install_bool_attribute_reflector(obj, cap, context, "selected", "selected");
+    }
+}
+
+fn install_attribute_reflector(
+    obj: &JsObject,
+    cap: &NodeCapture,
+    context: &mut Context,
+    property: &str,
+    attribute: &str,
+    fallback: &'static str,
+) {
+    #[derive(Clone)]
+    struct AttrCap {
+        node: NodePtr,
+        attribute: String,
+        fallback: &'static str,
+    }
+    unsafe impl Trace for AttrCap {
+        empty_trace!();
+    }
+    impl Finalize for AttrCap {}
+
+    let attr_cap = AttrCap {
+        node: cap.node.clone(),
+        attribute: attribute.to_string(),
+        fallback,
+    };
+    let getter = NativeFunction::from_copy_closure_with_captures(
+        |_this, _args, cap: &AttrCap, _ctx| {
+            let b = cap.node.borrow();
+            let value = match &*b {
+                Node::Element(el) => el
+                    .attributes
+                    .get(&cap.attribute)
+                    .cloned()
+                    .unwrap_or_else(|| cap.fallback.to_string()),
+                _ => cap.fallback.to_string(),
+            };
+            Ok(JsValue::from(JsString::from(value)))
+        },
+        attr_cap.clone(),
+    );
+    let setter = NativeFunction::from_copy_closure_with_captures(
+        |_this, args, cap: &AttrCap, _ctx| {
+            let value = js_string_of(args.get(0).unwrap_or(&JsValue::undefined()));
+            if let Node::Element(el) = &mut *cap.node.borrow_mut() {
+                el.attributes.insert(cap.attribute.clone(), value);
+            }
+            Ok(JsValue::undefined())
+        },
+        attr_cap,
+    );
+    install_accessor(obj, context, property, Some(getter), Some(setter));
+}
+
+fn install_bool_attribute_reflector(
+    obj: &JsObject,
+    cap: &NodeCapture,
+    context: &mut Context,
+    property: &str,
+    attribute: &str,
+) {
+    #[derive(Clone)]
+    struct BoolAttrCap {
+        node: NodePtr,
+        attribute: String,
+    }
+    unsafe impl Trace for BoolAttrCap {
+        empty_trace!();
+    }
+    impl Finalize for BoolAttrCap {}
+
+    let attr_cap = BoolAttrCap {
+        node: cap.node.clone(),
+        attribute: attribute.to_string(),
+    };
+    let getter = NativeFunction::from_copy_closure_with_captures(
+        |_this, _args, cap: &BoolAttrCap, _ctx| {
+            let b = cap.node.borrow();
+            let present = match &*b {
+                Node::Element(el) => el.attributes.contains_key(&cap.attribute),
+                _ => false,
+            };
+            Ok(JsValue::from(present))
+        },
+        attr_cap.clone(),
+    );
+    let setter = NativeFunction::from_copy_closure_with_captures(
+        |_this, args, cap: &BoolAttrCap, _ctx| {
+            let enabled = args.get(0).map(|v| v.to_boolean()).unwrap_or(false);
+            if let Node::Element(el) = &mut *cap.node.borrow_mut() {
+                if enabled {
+                    el.attributes
+                        .insert(cap.attribute.clone(), cap.attribute.clone());
+                } else {
+                    el.attributes.remove(&cap.attribute);
+                }
+            }
+            Ok(JsValue::undefined())
+        },
+        attr_cap,
+    );
+    install_accessor(obj, context, property, Some(getter), Some(setter));
 }
 
 // Install getter/setter accessors for properties that depend on the live DOM.
