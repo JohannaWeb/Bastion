@@ -2,6 +2,10 @@ MIT License Live Rust Java
 
 # Bastion
 
+# Mockup:
+
+<img width="1338" height="786" alt="image" src="https://github.com/user-attachments/assets/6e6d9d46-ccee-42fe-9907-3d789e9f2c9a" />
+
 Juntos is live: https://juntos.chat
 
 ---
