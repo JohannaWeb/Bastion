@@ -59,7 +59,35 @@ output = alpha * local_out + (1 - alpha) * rnn_out
 
 ### Multi-token prediction (optional)
 
-`config.yaml` has an `mtp:` section that enables auxiliary heads for speculative decoding. Disabled by default. When enabled, the model trains up to `max_k` prediction heads with a curriculum schedule and uses them at generation time to draft tokens that the main model then verifies. If you don't need faster generation, leave this off.
+`config.yaml` has an `mtp:` section that enables auxiliary prediction heads for speculative decoding. Disabled by default.
+
+When enabled, the model trains up to `max_k` auxiliary heads alongside the main LM head. Each head predicts a token further into the future (head 1 predicts t+2, head 2 predicts t+3, etc.). At generation time the heads draft `k` tokens per step, which the main model then verifies and accepts or rejects. First rejection terminates the draft.
+
+**Curriculum scheduler** — rather than training all `max_k` heads from step 0, the scheduler ramps how many heads are active during training. Three modes:
+
+- `forward` — starts at 1 active head and ramps up to `max_k` over training. Easier for the main trunk to stabilize before taking on harder future predictions.
+- `reverse` — starts at `max_k` and ramps down to 1. Forces the model to learn long-range drafts early while the trunk is still plastic.
+- `fixed` — all `max_k` heads active from step 0, no ramp. Simplest, highest variance early in training.
+
+`warmup_fraction` controls what fraction of total steps passes before the curriculum ramp begins, letting the main trunk settle first regardless of mode.
+
+**Trunk freezing** — `trunk_freeze_steps` freezes the main model weights for the first N steps while only the MTP heads train. Useful when loading a pretrained checkpoint and calibrating heads without disturbing the trunk.
+
+**Head loss weight** — `head_loss_weight` (default `0.3`) scales the auxiliary head losses relative to the main NTP loss. Lower values keep the MTP heads from dominating the gradient signal during the main model's training. `head_label_smoothing` adds optional smoothing to the auxiliary head targets.
+
+Relevant config keys:
+
+```yaml
+mtp:
+  enabled: false
+  max_k: 3                    # number of auxiliary heads
+  curriculum: "forward"       # forward / reverse / fixed
+  warmup_fraction: 0.1        # fraction of steps before ramp starts
+  head_loss_weight: 0.3       # auxiliary loss scale
+  trunk_freeze_steps: 300     # freeze trunk while calibrating heads
+  share_unembedding: false    # share LM head weights with MTP heads
+  head_label_smoothing: 0.1
+```
 
 ## Corpus
 
