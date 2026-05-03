@@ -1,5 +1,11 @@
+# CLI / editor tooling
 .codex
+.claude/
 .idea/
+.cursor/
+.aider*
+
+# Python
 .venv/
 __pycache__/
 

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Correctness tests for Triton kernels: compare against PyTorch reference."""
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import torch
 import torch.nn.functional as F
 import pytorch_fork  # noqa: F401

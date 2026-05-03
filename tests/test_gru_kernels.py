@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Test GRU forward and backward kernels after bug fixes."""
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import torch
 import torch.nn.functional as F
 from pytorch_fork.kernels.gated_rnn_fwd import gated_rnn_fwd_kernel

@@ -4,11 +4,16 @@ ML project for training a language model from scratch on Rust web documentation.
 
 ## Project Structure
 
-- `src/` — Python: `train.py`, `model.py`, `generate.py`, corpus builders
+- `src/` — Python: `train.py`, `model.py`, `generate.py`, corpus builders, benchmarks
+- `tests/` — Test suite
+- `docs/` — Design docs, analysis, and reports
+- `configs/` — Variant training configs (`config.20m.yaml`, `config.50m.yaml`, etc.)
+- `scripts/` — Utility shell/Python scripts (`monitor_training.sh`, `fix.py`)
+- `logs/` — Training logs
 - `data/` — Training data (Rust web book)
 - `checkpoints/` — Model checkpoints
-- `config.yaml` — Training configuration
-- `train_from_scratch.sh` — Training script
+- `config.yaml` — Default training configuration
+- `train_from_scratch.sh` — Main training pipeline script
 
 ## Key Commands
 
