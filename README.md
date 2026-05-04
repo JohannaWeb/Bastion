@@ -1,3 +1,7 @@
+# Story time
+
+After a car accident and discrimination as a trans femme engineer, I rebuilt myself and started building sovereign computing infrastructure so people like me can own their identity, tools, and communities.
+
 <img width="1200" height="400" alt="image" src="https://github.com/user-attachments/assets/26349434-0630-46d0-972c-131f547853c6" />
 
 # Bastion
